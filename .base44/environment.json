@@ -1,0 +1,1 @@
+{"previewPort": 3000, "healthPath": "/", "startCommand": "docker compose -f docker-compose.base44.yml up -d", "secrets": [{"name": "JWT_SECRET", "description": "Secret key used to sign JWT authentication tokens for the Express app. Any random string works for development.", "requiredAtBoot": true, "generatedForDevelopment": true}]}
