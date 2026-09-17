@@ -15,7 +15,7 @@ app.use(express.static(__dirname));
 // Configuração do Banco de Dados PostgreSQL (usando a URL da Render)
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL || 'postgresql://coontadoronnline_user:7rpGNrhb0DGachE29ibe9q5mNESBQnh4@dpg-daljnhm5vjqs73fl8ep0-a/coontadoronnline',
-    ssl: { rejectUnauthorized: false }
+    ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false }
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura';
