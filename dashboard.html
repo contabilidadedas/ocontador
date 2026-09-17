@@ -7,62 +7,96 @@
     <!-- Fonte Inter & Ícones Lucide -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background-color: #f8fafc; color: #0f172a; min-height: 100vh; }
-        
+        body { background-color: #020617; color: #f1f5f9; min-height: 100vh; }
+
         /* Topbar / Navegação */
-        .navbar { background: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }
-        .navbar .brand { font-size: 18px; font-weight: 700; color: #1e3a8a; display: flex; align-items: center; gap: 8px; }
+        .navbar { background: rgba(15,23,42,0.5); backdrop-filter: blur(8px); border-bottom: 1px solid #1e293b; padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .navbar .brand { font-size: 18px; font-weight: 700; color: #60a5fa; display: flex; align-items: center; gap: 8px; }
         .navbar .user-info { display: flex; align-items: center; gap: 16px; }
-        .btn-logout { background: transparent; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 6px; cursor: pointer; color: #64748b; font-weight: 500; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
-        .btn-logout:hover { background: #f1f5f9; color: #dc2626; border-color: #fca5a5; }
+        .btn-logout { background: transparent; border: 1px solid #334155; padding: 8px 12px; border-radius: 8px; cursor: pointer; color: #cbd5e1; font-weight: 500; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
+        .btn-logout:hover { background: #1e293b; color: #f87171; border-color: #ef4444; }
 
         /* Container Principal */
-        .container { max-width: 1000px; margin: 40px auto; padding: 0 20px; }
-        .welcome-card { background: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
-        .welcome-card h1 { font-size: 22px; font-weight: 700; color: #0f172a; }
-        .welcome-card p { font-size: 14px; color: #64748b; margin-top: 4px; }
+        .container { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+        .welcome-card { background: #0f172a; padding: 24px; border-radius: 16px; border: 1px solid #1e293b; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .welcome-card h1 { font-size: 22px; font-weight: 700; color: #f8fafc; }
+        .welcome-card p { font-size: 14px; color: #94a3b8; margin-top: 4px; }
+
+        /* Cards de Estatística */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .stat-card .stat-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 8px; }
+        .stat-card .stat-value { font-size: 28px; font-weight: 700; color: #f8fafc; }
+        .stat-card .stat-sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+        .stat-card.accent-blue { border-color: rgba(59,130,246,0.3); }
+        .stat-card.accent-blue .stat-value { color: #60a5fa; }
+        .stat-card.accent-emerald { border-color: rgba(16,185,129,0.3); }
+        .stat-card.accent-emerald .stat-value { color: #34d399; }
+        .stat-card.accent-amber { border-color: rgba(245,158,11,0.3); }
+        .stat-card.accent-amber .stat-value { color: #fbbf24; }
+        .stat-card.accent-purple { border-color: rgba(168,85,247,0.3); }
+        .stat-card.accent-purple .stat-value { color: #c084fc; }
+
+        /* Grid de Gráfico + Discriminação */
+        .analytics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        @media (max-width: 768px) { .analytics-grid { grid-template-columns: 1fr; } }
+
+        .chart-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .chart-card h3 { font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 16px; }
+        .chart-wrapper { position: relative; height: 280px; }
+
+        .breakdown-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .breakdown-card h3 { font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 16px; }
+        .breakdown-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #1e293b; }
+        .breakdown-item:last-child { border-bottom: none; }
+        .breakdown-item .label { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #cbd5e1; }
+        .breakdown-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .breakdown-item .value { font-size: 15px; font-weight: 600; color: #f8fafc; }
+        .breakdown-item .pct { font-size: 12px; color: #64748b; margin-left: 8px; }
 
         /* Tabela de Impostos */
-        .table-card { background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-        .table-header { padding: 20px 24px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
-        .table-header h2 { font-size: 16px; font-weight: 600; color: #1e293b; }
-        
+        .table-card { background: #0f172a; border-radius: 16px; border: 1px solid #1e293b; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .table-header { padding: 20px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+        .table-header h2 { font-size: 16px; font-weight: 600; color: #f8fafc; }
+
         table { width: 100%; border-collapse: collapse; text-align: left; }
-        th { background: #f8fafc; padding: 14px 24px; font-size: 12px; font-weight: 600; color: #475569; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; }
-        td { padding: 16px 24px; font-size: 14px; color: #334155; border-bottom: 1px solid #f1f5f9; }
+        th { background: rgba(2,6,23,0.5); padding: 14px 24px; font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; border-bottom: 1px solid #1e293b; }
+        td { padding: 16px 24px; font-size: 14px; color: #cbd5e1; border-bottom: 1px solid #1e293b; }
         tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(30,41,59,0.4); }
 
         /* Badges de Status */
         .badge { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-block; }
-        .badge-pendente { background: #fef3c7; color: #92400e; }
-        .badge-pago { background: #dcfce7; color: #166534; }
+        .badge-pendente { background: rgba(245,158,11,0.15); color: #fbbf24; }
+        .badge-pago { background: rgba(16,185,129,0.15); color: #34d399; }
 
         /* Botões de Ação */
         .action-buttons { display: flex; gap: 8px; }
-        .btn-action { padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; text-decoration: none; border: none; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.2s; }
+        .btn-action { padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; text-decoration: none; border: none; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.2s; }
         .btn-pix { background-color: #10b981; color: white; }
         .btn-pix:hover { background-color: #059669; }
-        .btn-pdf { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
-        .btn-pdf:hover { background-color: #e2e8f0; }
+        .btn-pdf { background-color: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
+        .btn-pdf:hover { background-color: #334155; }
 
         /* Estado Vazio */
         .empty-state { text-align: center; padding: 48px; color: #64748b; }
-        .empty-state i { width: 48px; height: 48px; margin-bottom: 12px; color: #94a3b8; }
+        .empty-state i { width: 48px; height: 48px; margin-bottom: 12px; color: #475569; }
 
         /* Modal de Troca de Senha Obrigatória */
-        .modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-        .modal-card { background: #ffffff; border-radius: 12px; width: 100%; max-width: 420px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
-        .modal-card h3 { font-size: 18px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
-        .modal-card p { font-size: 13px; color: #64748b; margin-bottom: 20px; line-height: 1.4; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(2,6,23,0.8); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+        .modal-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; width: 100%; max-width: 420px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4); }
+        .modal-card h3 { font-size: 18px; font-weight: 700; color: #f8fafc; margin-bottom: 8px; }
+        .modal-card p { font-size: 13px; color: #94a3b8; margin-bottom: 20px; line-height: 1.4; }
         .form-group { margin-bottom: 16px; }
-        .form-group label { display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px; text-transform: uppercase; }
-        .form-group input { width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; color: #0f172a; outline: none; transition: border-color 0.2s; }
-        .form-group input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
-        .btn-primary { width: 100%; background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s; }
-        .btn-primary:hover { background: #1d4ed8; }
-        .modal-error { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; padding: 10px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .form-group label { display: block; font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 6px; text-transform: uppercase; }
+        .form-group input { width: 100%; padding: 10px 14px; background: #020617; border: 1px solid #334155; border-radius: 8px; font-size: 14px; color: #f8fafc; outline: none; transition: border-color 0.2s; }
+        .form-group input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .btn-primary { width: 100%; background: #3b82f6; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s; }
+        .btn-primary:hover { background: #2563eb; }
+        .modal-error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #f87171; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
     </style>
 </head>
 <body>
@@ -73,7 +107,7 @@
             <i data-lucide="file-text"></i> Seu Contador Online
         </div>
         <div class="user-info">
-            <span id="empresaNome" style="font-size: 14px; font-weight: 600; color: #334155;">Carregando...</span>
+            <span id="empresaNome" style="font-size: 14px; font-weight: 600; color: #cbd5e1;">Carregando...</span>
             <button class="btn-logout" onclick="logout()">
                 <i data-lucide="log-out" style="width: 16px;"></i> Sair
             </button>
@@ -87,11 +121,51 @@
             <p id="empresaCnpj">CNPJ: --.---.---/----.--</p>
         </div>
 
+        <!-- Cards de Estatística -->
+        <div class="stats-grid">
+            <div class="stat-card accent-blue">
+                <div class="stat-label">Total de Tributos no Ano</div>
+                <div class="stat-value" id="statTotalAno">R$ 0,00</div>
+                <div class="stat-sub" id="statAnoReferencia">Aguardando dados...</div>
+            </div>
+            <div class="stat-card accent-emerald">
+                <div class="stat-label">Quantidade de Guias</div>
+                <div class="stat-value" id="statQtdGuias">0</div>
+                <div class="stat-sub">guias no período</div>
+            </div>
+            <div class="stat-card accent-amber">
+                <div class="stat-label">Maior Tributo</div>
+                <div class="stat-value" id="statMaiorTributo" style="font-size:20px;">—</div>
+                <div class="stat-sub" id="statMaiorTributoValor">R$ 0,00</div>
+            </div>
+            <div class="stat-card accent-purple">
+                <div class="stat-label">Tipos de Imposto</div>
+                <div class="stat-value" id="statTiposImposto">0</div>
+                <div class="stat-sub">tributos distintos</div>
+            </div>
+        </div>
+
+        <!-- Gráfico + Discriminação -->
+        <div class="analytics-grid">
+            <div class="chart-card">
+                <h3>Distribuição de Tributos por Tipo</h3>
+                <div class="chart-wrapper">
+                    <canvas id="graficoTributos"></canvas>
+                </div>
+            </div>
+            <div class="breakdown-card">
+                <h3>Discriminação por Imposto</h3>
+                <div id="breakdownLista">
+                    <p style="color:#64748b; font-size:14px;">Carregando...</p>
+                </div>
+            </div>
+        </div>
+
         <div class="table-card">
             <div class="table-header">
                 <h2>Guias e Impostos Disponíveis</h2>
             </div>
-            
+
             <table>
                 <thead>
                     <tr>
@@ -120,7 +194,7 @@
         <div class="modal-card">
             <h3>Primeiro Acesso</h3>
             <p>Por motivos de segurança, você precisa alterar a sua senha provisória antes de continuar para o painel.</p>
-            
+
             <div id="modalErro" class="modal-error"></div>
 
             <form id="formTrocaSenha" onsubmit="alterarSenhaPrimeiroAcesso(event)">
@@ -140,6 +214,11 @@
     <script>
         lucide.createIcons();
 
+        let graficoTributos = null;
+
+        // Paleta de cores para os gráficos
+        const CORES_GRAFICO = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+
         const token = localStorage.getItem('token');
         const empresa = JSON.parse(localStorage.getItem('empresa') || '{}');
 
@@ -149,7 +228,7 @@
             document.getElementById('empresaNome').textContent = empresa.razaoSocial || 'Minha Empresa';
             document.getElementById('welcomeTitle').textContent = `Bem-vindo, ${empresa.razaoSocial || 'Cliente'}`;
             document.getElementById('empresaCnpj').textContent = `CNPJ: ${formatarCNPJ(empresa.cnpj)}`;
-            
+
             // Verifica se é o primeiro acesso
             if (empresa.primeiroAcesso === true || empresa.primeiroAcesso === 'true') {
                 document.getElementById('modalPrimeiroAcesso').style.display = 'flex';
@@ -161,6 +240,10 @@
         function formatarCNPJ(v) {
             if (!v) return '';
             return v.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+        }
+
+        function formatarMoeda(v) {
+            return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         }
 
         async function alterarSenhaPrimeiroAcesso(e) {
@@ -193,7 +276,6 @@
                 const resultado = await response.json();
                 if (!response.ok) throw new Error(resultado.erro || 'Erro ao atualizar senha.');
 
-                // Atualiza o objeto no localStorage para remover o primeiro acesso
                 empresa.primeiroAcesso = false;
                 localStorage.setItem('empresa', JSON.stringify(empresa));
 
@@ -204,6 +286,21 @@
                 erroDiv.textContent = error.message;
                 erroDiv.style.display = 'block';
             }
+        }
+
+        // Extrai o ano de uma guia (usa competência MM/YYYY ou vencimento como fallback)
+        function extrairAno(item) {
+            if (item.competencia && item.competencia.includes('/')) {
+                const partes = item.competencia.split('/');
+                return parseInt(partes[partes.length - 1], 10);
+            }
+            if (item.vencimento) {
+                return new Date(item.vencimento).getFullYear();
+            }
+            if (item.datacriacao) {
+                return new Date(item.datacriacao).getFullYear();
+            }
+            return new Date().getFullYear();
         }
 
         async function carregarImpostos() {
@@ -225,17 +322,19 @@
 
                 if (!tributos || tributos.length === 0) {
                     emptyState.style.display = 'block';
+                    document.getElementById('statAnoReferencia').textContent = 'Nenhuma guia cadastrada';
                     return;
                 }
 
                 emptyState.style.display = 'none';
 
+                // Renderiza a tabela
                 tributos.forEach(item => {
                     const tr = document.createElement('tr');
-                    
+
                     const vencimento = item.vencimento ? new Date(item.vencimento).toLocaleDateString('pt-BR') : '--/--/----';
-                    const valorFormatted = Number(item.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-                    
+                    const valorFormatted = formatarMoeda(item.valor);
+
                     tr.innerHTML = `
                         <td><strong>${item.tipoimposto || 'Imposto'}</strong></td>
                         <td>${item.competencia || '--'}</td>
@@ -253,9 +352,124 @@
                 });
 
                 lucide.createIcons();
+
+                // === Estatísticas e Gráfico ===
+                const anoAtual = new Date().getFullYear();
+                const tributosAno = tributos.filter(t => extrairAno(t) === anoAtual);
+
+                // Soma total do ano
+                const totalAno = tributosAno.reduce((soma, t) => soma + Number(t.valor || 0), 0);
+                document.getElementById('statTotalAno').textContent = formatarMoeda(totalAno);
+                document.getElementById('statAnoReferencia').textContent = `Ano-base ${anoAtual}`;
+                document.getElementById('statQtdGuias').textContent = tributosAno.length;
+
+                // Agrupa por tipo de imposto
+                const porTipo = {};
+                tributosAno.forEach(t => {
+                    const tipo = t.tipoimposto || 'Outros';
+                    if (!porTipo[tipo]) porTipo[tipo] = 0;
+                    porTipo[tipo] += Number(t.valor || 0);
+                });
+
+                const tipos = Object.keys(porTipo).sort((a, b) => porTipo[b] - porTipo[a]);
+                document.getElementById('statTiposImposto').textContent = tipos.length;
+
+                // Maior tributo
+                if (tipos.length > 0) {
+                    const maiorTipo = tipos[0];
+                    document.getElementById('statMaiorTributo').textContent = maiorTipo;
+                    document.getElementById('statMaiorTributoValor').textContent = formatarMoeda(porTipo[maiorTipo]);
+                }
+
+                // Discriminação (lista detalhada)
+                const breakdownLista = document.getElementById('breakdownLista');
+                if (tipos.length === 0) {
+                    breakdownLista.innerHTML = '<p style="color:#64748b; font-size:14px;">Nenhum tributo no ano atual.</p>';
+                } else {
+                    breakdownLista.innerHTML = tipos.map((tipo, i) => {
+                        const valor = porTipo[tipo];
+                        const pct = totalAno > 0 ? ((valor / totalAno) * 100).toFixed(1) : '0.0';
+                        const cor = CORES_GRAFICO[i % CORES_GRAFICO.length];
+                        return `
+                            <div class="breakdown-item">
+                                <div class="label">
+                                    <span class="dot" style="background:${cor};"></span>
+                                    ${tipo}
+                                </div>
+                                <div>
+                                    <span class="value">${formatarMoeda(valor)}</span>
+                                    <span class="pct">${pct}%</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                // Gráfico
+                renderizarGrafico(tipos, tipos.map(t => porTipo[t]));
+
             } catch (error) {
                 console.error('Erro ao buscar impostos:', error);
             }
+        }
+
+        function renderizarGrafico(labels, dados) {
+            const ctx = document.getElementById('graficoTributos').getContext('2d');
+
+            if (graficoTributos) {
+                graficoTributos.destroy();
+            }
+
+            if (labels.length === 0) {
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.fillStyle = '#64748b';
+                ctx.font = '14px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Nenhum dado para exibir', ctx.canvas.width / 2, ctx.canvas.height / 2);
+                return;
+            }
+
+            const cores = labels.map((_, i) => CORES_GRAFICO[i % CORES_GRAFICO.length]);
+
+            graficoTributos = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: dados,
+                        backgroundColor: cores,
+                        borderColor: '#0f172a',
+                        borderWidth: 2,
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#cbd5e1',
+                                font: { size: 12, family: 'Inter' },
+                                padding: 12,
+                                usePointStyle: true,
+                                pointStyle: 'circle'
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const valor = context.parsed;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = total > 0 ? ((valor / total) * 100).toFixed(1) : '0.0';
+                                    return ` ${context.label}: ${formatarMoeda(valor)} (${pct}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         function copiarPix(codigoPix) {
