@@ -100,8 +100,12 @@
                     <input type="email" id="empresa-email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500" placeholder="cliente@empresa.com">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Senha de Acesso do Cliente</label>
-                    <input type="password" id="empresa-senha" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500" placeholder="••••••••">
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Senha Provisória do Cliente (Gerada Automaticamente)</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="empresa-senha" required readonly class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono text-sm" placeholder="Clique em Gerar Senha">
+                        <button type="button" onclick="gerarSenhaCliente()" class="px-4 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors whitespace-nowrap">Gerar Senha</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1.5">Esta senha é independente da sua senha de contador. O cliente será obrigado a trocá-la no primeiro acesso.</p>
                 </div>
 
                 <div class="flex justify-end space-x-3 pt-4 border-t border-slate-800">
@@ -132,6 +136,16 @@
 
         function abrirModalCadastro() {
             document.getElementById('modal-cadastro').classList.remove('hidden');
+            gerarSenhaCliente();
+        }
+
+        function gerarSenhaCliente() {
+            const caracteres = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+            let senha = '';
+            for (let i = 0; i < 8; i++) {
+                senha += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
+            }
+            document.getElementById('empresa-senha').value = senha;
         }
 
         function fecharModalCadastro() {
