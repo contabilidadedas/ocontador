@@ -200,6 +200,21 @@
         .checklist-status.calculado { background: var(--badge-blue); }
         .checklist-status.disponivel { background: var(--badge-green); }
 
+        /* KANBAN / FUNIL CRM */
+        .kanban-board { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 12px; min-height: 420px; }
+        .kanban-column { flex: 1; min-width: 260px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; }
+        .kanban-column-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .kanban-column-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .kanban-column-count { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+        .kanban-cards { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 100px; transition: background 0.15s; }
+        .kanban-cards.drag-over { background: rgba(59,130,246,0.06); border-radius: 8px; }
+        .kanban-card { background: var(--bg-body); border: 1px solid var(--border-light); border-radius: 10px; padding: 14px; cursor: grab; transition: border-color 0.15s, opacity 0.15s; }
+        .kanban-card:hover { border-color: var(--accent-blue); }
+        .kanban-card.dragging { opacity: 0.4; }
+        .kanban-card-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+        .kanban-card-info { font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; }
+        .kanban-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+
         /* MOBILE TOGGLE */
         .mobile-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 101; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; padding: 10px; cursor: pointer; color: var(--text-primary); }
         @media (max-width: 768px) {
@@ -919,51 +934,82 @@ views.chat = async function() {
     lucide.createIcons();
 };
 
-// --- CRM ---
+// --- CRM (Funil Kanban) ---
+const funilEtapas = [
+    { status: 'novo',       label: 'Novo',       color: '#a78bfa', bg: 'rgba(111,66,193,0.15)' },
+    { status: 'contatado',  label: 'Em Contato',  color: '#60a5fa', bg: 'rgba(59,130,246,0.15)' },
+    { status: 'negociando', label: 'Proposta',    color: '#fbbf24', bg: 'rgba(217,119,6,0.15)' },
+    { status: 'ganho',      label: 'Fechado',     color: '#4ade80', bg: 'rgba(22,163,74,0.15)' }
+];
+let kanbanDragId = null;
+
 views.crm = async function() {
     document.getElementById('content').innerHTML = `
-        <h1 class="page-title">CRM - Gestão de Contatos</h1>
-        <p class="page-subtitle">Gerencie leads, prospects e clientes potenciais</p>
+        <h1 class="page-title">CRM - Funil de Vendas</h1>
+        <p class="page-subtitle">Arraste os contatos entre as colunas conforme o avanço</p>
         <div class="metrics-grid" id="crm-metrics"></div>
-        <div class="table-card">
-            <div class="table-header"><div><h3>Contatos</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalCRM()">+ Novo Contato</button></div>
-            <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Nome</th><th>Empresa</th><th>E-mail</th><th>Telefone</th><th>Tipo</th><th>Status</th><th>Ações</th></tr></thead>
-                <tbody id="crm-tbody"></tbody>
-            </table></div>
-        </div>`;
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="font-size:16px;font-weight:700;">Funil</h3>
+            <button class="btn-sm btn-sm-blue" onclick="abrirModalCRM()">+ Novo Contato</button>
+        </div>
+        <div class="kanban-board" id="kanban-board"></div>`;
     try {
         const contatos = await api('/api/crm/contatos');
         // Métricas
         const total = contatos.length;
         const leads = contatos.filter(c => c.tipo === 'lead').length;
         const clientes = contatos.filter(c => c.tipo === 'cliente').length;
-        const novos = contatos.filter(c => c.status === 'novo').length;
+        const fechados = contatos.filter(c => c.status === 'ganho').length;
         document.getElementById('crm-metrics').innerHTML = `
             <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Total</div><div class="metric-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa;"><i data-lucide="users"></i></div></div><div class="metric-value">${total}</div><div class="metric-sub">contatos</div></div>
             <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Leads</div><div class="metric-icon" style="background:rgba(217,119,6,0.15);color:#fbbf24;"><i data-lucide="user-plus"></i></div></div><div class="metric-value">${leads}</div><div class="metric-sub">em prospecção</div></div>
             <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Clientes</div><div class="metric-icon" style="background:rgba(22,163,74,0.15);color:#4ade80;"><i data-lucide="user-check"></i></div></div><div class="metric-value">${clientes}</div><div class="metric-sub">convertidos</div></div>
-            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Novos</div><div class="metric-icon" style="background:rgba(111,66,193,0.15);color:#a78bfa;"><i data-lucide="sparkles"></i></div></div><div class="metric-value">${novos}</div><div class="metric-sub">sem contato</div></div>`;
-        const tb = document.getElementById('crm-tbody');
-        if (contatos.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhum contato cadastrado.'); lucide.createIcons(); return; }
-        const tipoBadge = { lead: 'orange', prospect: 'blue', cliente: 'green', inativo: 'grey' };
-        const statusBadge = { novo: 'purple', contatado: 'blue', negociando: 'orange', ganho: 'green', perdido: 'urgente' };
-        tb.innerHTML = contatos.map(c => `
-            <tr>
-                <td style="font-weight:600;">${c.nome}</td>
-                <td class="text-secondary">${c.empresa || '—'}</td>
-                <td class="text-secondary">${c.email || '—'}</td>
-                <td class="text-secondary">${c.telefone || '—'}</td>
-                <td><span class="badge badge-${tipoBadge[c.tipo]||'grey'}">${(c.tipo||'lead').toUpperCase()}</span></td>
-                <td><span class="badge badge-${statusBadge[c.status]||'grey'}">${(c.status||'novo').toUpperCase()}</span></td>
-                <td>
-                    <button class="btn-sm btn-sm-blue" onclick="abrirModalCRMEditar(${c.id})">Editar</button>
-                    <button class="btn-sm btn-sm-red" onclick="deletarCRM(${c.id})">Excluir</button>
-                </td>
-            </tr>`).join('');
-    } catch (e) { document.getElementById('crm-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
+            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Fechados</div><div class="metric-icon" style="background:rgba(22,163,74,0.15);color:#4ade80;"><i data-lucide="trophy"></i></div></div><div class="metric-value">${fechados}</div><div class="metric-sub">negócios ganhos</div></div>`;
+        // Monta as colunas do funil
+        const board = document.getElementById('kanban-board');
+        board.innerHTML = funilEtapas.map(etapa => {
+            const cards = contatos.filter(c => c.status === etapa.status);
+            return `
+                <div class="kanban-column">
+                    <div class="kanban-column-header">
+                        <span class="kanban-column-title" style="color:${etapa.color};">${etapa.label}</span>
+                        <span class="kanban-column-count" style="background:${etapa.bg};color:${etapa.color};">${cards.length}</span>
+                    </div>
+                    <div class="kanban-cards" data-status="${etapa.status}" ondragover="kanbanDragOver(event)" ondrop="kanbanDrop(event,'${etapa.status}')" ondragleave="kanbanDragLeave(event)">
+                        ${cards.length === 0 ? '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:20px;">Arraste aqui</div>' : cards.map(c => `
+                        <div class="kanban-card" draggable="true" ondragstart="kanbanDragStart(event,${c.id})" ondragend="kanbanDragEnd(event)">
+                            <div class="kanban-card-name">${c.nome}</div>
+                            ${c.empresa ? `<div class="kanban-card-info">${c.empresa}</div>` : ''}
+                            ${c.email ? `<div class="kanban-card-info">${c.email}</div>` : ''}
+                            ${c.telefone ? `<div class="kanban-card-info">${c.telefone}</div>` : ''}
+                            <div class="kanban-card-actions">
+                                <button class="btn-sm btn-sm-blue" onclick="abrirModalCRMEditar(${c.id})">Editar</button>
+                                <button class="btn-sm btn-sm-red" onclick="deletarCRM(${c.id})">Excluir</button>
+                            </div>
+                        </div>`).join('')}
+                    </div>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        document.getElementById('kanban-board').innerHTML = '<div style="color:var(--text-muted);padding:40px;">Erro ao carregar.</div>';
+    }
     lucide.createIcons();
 };
+
+// Kanban drag-and-drop handlers
+function kanbanDragStart(e, id) { kanbanDragId = id; e.target.classList.add('dragging'); }
+function kanbanDragEnd(e) { e.target.classList.remove('dragging'); }
+function kanbanDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function kanbanDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+async function kanbanDrop(e, status) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    if (!kanbanDragId) return;
+    const id = kanbanDragId;
+    kanbanDragId = null;
+    try { await api(`/api/crm/contatos/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }); navigate('crm'); }
+    catch (e) { alert(e.message); }
+}
 
 // --- RELATÓRIOS ---
 views.relatorios = async function() {
