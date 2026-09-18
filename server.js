@@ -198,6 +198,20 @@ async function criarTabelasAutomaticamente() {
                 status VARCHAR(50) DEFAULT 'pendente',
                 datacriacao TIMESTAMP DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS crm_contatos (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER NOT NULL,
+                nome VARCHAR(255) NOT NULL,
+                email VARCHAR(255),
+                telefone VARCHAR(50),
+                empresa VARCHAR(255),
+                cargo VARCHAR(100),
+                tipo VARCHAR(30) DEFAULT 'lead',
+                status VARCHAR(30) DEFAULT 'novo',
+                observacao TEXT,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
         `);
 
         // Garante colunas em tabelas antigas
@@ -442,6 +456,16 @@ app.put('/api/guias/:id/status', verificarTokenContador, async (req, res) => {
     }
 });
 
+app.delete('/api/guias/:id', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM guias WHERE id = $1', [req.params.id]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu guia ID: ${req.params.id}`, req);
+        res.json({ mensagem: 'Guia excluída.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
 app.get('/api/guias/download/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -600,6 +624,25 @@ app.put('/api/documentos/:id/status', verificarTokenContador, async (req, res) =
     }
 });
 
+app.delete('/api/documentos/:id', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM documentos WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu documento ID: ${req.params.id}`, req);
+        res.json({ mensagem: 'Documento excluído.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.delete('/api/documentos/cliente/:id', verificarTokenCliente, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM documentos WHERE id = $1 AND empresa_id = $2', [req.params.id, req.empresaId]);
+        res.json({ mensagem: 'Documento excluído.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
 // ==========================================
 // 6. PENDÊNCIAS
 // ==========================================
@@ -747,30 +790,8 @@ app.put('/api/avisos/:id/lido', verificarTokenContador, async (req, res) => {
 // ==========================================
 // 9. CHAT
 // ==========================================
-app.get('/api/chat/:empresaId', verificarTokenContador, async (req, res) => {
-    try {
-        const resultado = await pool.query(
-            'SELECT * FROM chat_mensagens WHERE empresa_id = $1 ORDER BY datacriacao ASC', [req.params.empresaId]
-        );
-        res.json(resultado.rows);
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro: ' + erro.message });
-    }
-});
-
-app.post('/api/chat', verificarTokenContador, async (req, res) => {
-    try {
-        const { empresa_id, mensagem } = req.body;
-        await pool.query(
-            'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
-            [req.contadorId, empresa_id, 'contador', mensagem]
-        );
-        res.status(201).json({ mensagem: 'Mensagem enviada!' });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro: ' + erro.message });
-    }
-});
-
+// Rotas /api/chat/cliente DEVEM vir antes de /api/chat/:empresaId
+// para o Express não capturar "cliente" como parâmetro
 app.get('/api/chat/cliente', verificarTokenCliente, async (req, res) => {
     try {
         const resultado = await pool.query(
@@ -790,6 +811,30 @@ app.post('/api/chat/cliente', verificarTokenCliente, async (req, res) => {
         await pool.query(
             'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
             [contadorId, req.empresaId, 'cliente', mensagem]
+        );
+        res.status(201).json({ mensagem: 'Mensagem enviada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.get('/api/chat/:empresaId', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT * FROM chat_mensagens WHERE empresa_id = $1 ORDER BY datacriacao ASC', [req.params.empresaId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/chat', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, mensagem } = req.body;
+        await pool.query(
+            'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
+            [req.contadorId, empresa_id, 'contador', mensagem]
         );
         res.status(201).json({ mensagem: 'Mensagem enviada!' });
     } catch (erro) {
@@ -929,6 +974,20 @@ app.post('/api/notas-fiscais', verificarTokenContador, upload.single('arquivo'),
     }
 });
 
+app.get('/api/notas-fiscais/download/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM notas_fiscais WHERE id = $1', [id]);
+        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        const nf = resultado.rows[0];
+        res.setHeader('Content-Type', nf.arquivotipo || 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${nf.arquivonome || 'nota.pdf'}"`);
+        res.send(nf.arquivodados);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
 // ==========================================
 // 14. FOLHA DE PAGAMENTO
 // ==========================================
@@ -961,6 +1020,74 @@ app.put('/api/folha-pagamento/:id/status', verificarTokenContador, async (req, r
     try {
         await pool.query('UPDATE folha_pagamento SET status = $1 WHERE id = $2 AND contador_id = $3', [req.body.status, req.params.id, req.contadorId]);
         res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 14b. NOTAS FISCAIS - Excluir
+// ==========================================
+app.delete('/api/notas-fiscais/:id', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM notas_fiscais WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu nota fiscal ID: ${req.params.id}`, req);
+        res.json({ mensagem: 'Nota fiscal excluída.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 14c. CRM - Gestão de Contatos
+// ==========================================
+app.get('/api/crm/contatos', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT * FROM crm_contatos WHERE contador_id = $1 ORDER BY datacriacao DESC', [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/crm/contatos', verificarTokenContador, async (req, res) => {
+    try {
+        const { nome, email, telefone, empresa, cargo, tipo, status, observacao } = req.body;
+        if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório.' });
+        await pool.query(
+            `INSERT INTO crm_contatos (contador_id, nome, email, telefone, empresa, cargo, tipo, status, observacao, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) RETURNING id`,
+            [req.contadorId, nome, email || '', telefone || '', empresa || '', cargo || '', tipo || 'lead', status || 'novo', observacao || '']
+        );
+        res.status(201).json({ mensagem: 'Contato criado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nome, email, telefone, empresa, cargo, tipo, status, observacao } = req.body;
+        await pool.query(
+            `UPDATE crm_contatos SET nome = COALESCE($1, nome), email = COALESCE($2, email), telefone = COALESCE($3, telefone),
+             empresa = COALESCE($4, empresa), cargo = COALESCE($5, cargo), tipo = COALESCE($6, tipo),
+             status = COALESCE($7, status), observacao = COALESCE($8, observacao)
+             WHERE id = $9 AND contador_id = $10`,
+            [nome, email, telefone, empresa, cargo, tipo, status, observacao, id, req.contadorId]
+        );
+        res.json({ mensagem: 'Contato atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.delete('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM crm_contatos WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Contato excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
