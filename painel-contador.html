@@ -200,6 +200,21 @@
         .checklist-status.calculado { background: var(--badge-blue); }
         .checklist-status.disponivel { background: var(--badge-green); }
 
+        /* KANBAN / FUNIL CRM */
+        .kanban-board { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 12px; min-height: 420px; }
+        .kanban-column { flex: 1; min-width: 260px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; }
+        .kanban-column-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .kanban-column-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .kanban-column-count { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+        .kanban-cards { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 100px; transition: background 0.15s; }
+        .kanban-cards.drag-over { background: rgba(59,130,246,0.06); border-radius: 8px; }
+        .kanban-card { background: var(--bg-body); border: 1px solid var(--border-light); border-radius: 10px; padding: 14px; cursor: grab; transition: border-color 0.15s, opacity 0.15s; }
+        .kanban-card:hover { border-color: var(--accent-blue); }
+        .kanban-card.dragging { opacity: 0.4; }
+        .kanban-card-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+        .kanban-card-info { font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; }
+        .kanban-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+
         /* MOBILE TOGGLE */
         .mobile-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 101; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; padding: 10px; cursor: pointer; color: var(--text-primary); }
         @media (max-width: 768px) {
@@ -241,6 +256,7 @@
                 <div class="nav-section-title">Cadastros</div>
                 <a class="nav-item" data-view="clientes" onclick="navigate('clientes')"><i data-lucide="users"></i> Clientes</a>
                 <a class="nav-item" data-view="empresas" onclick="navigate('empresas')"><i data-lucide="building-2"></i> Empresas</a>
+                <a class="nav-item" data-view="crm" onclick="navigate('crm')"><i data-lucide="contact"></i> CRM</a>
             </div>
 
             <div class="nav-section">
@@ -604,14 +620,14 @@ views['docs-recebidos'] = async function() {
         <div class="table-card">
             <div class="table-header"><div><h3>Recebidos</h3></div></div>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Empresa</th><th>Categoria</th><th>Descrição</th><th>Enviado por</th><th>Data</th><th>Arquivo</th></tr></thead>
+                <thead><tr><th>Empresa</th><th>Categoria</th><th>Descrição</th><th>Enviado por</th><th>Data</th><th>Arquivo</th><th>Ações</th></tr></thead>
                 <tbody id="docs-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const docs = await api('/api/documentos?tipo=recebido');
         const tb = document.getElementById('docs-tbody');
-        if (docs.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhum documento recebido.'); return; }
+        if (docs.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhum documento recebido.'); return; }
         tb.innerHTML = docs.map(d => `
             <tr>
                 <td>${d.razaosocial || '—'}</td>
@@ -620,8 +636,9 @@ views['docs-recebidos'] = async function() {
                 <td class="text-secondary">${d.enviado_por || '—'}</td>
                 <td class="text-secondary">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
                 <td>${d.arquivonome ? `<a href="/api/documentos/download/${d.id}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a>` : '—'}</td>
+                <td><button class="btn-sm btn-sm-red" onclick="deletarDocumento(${d.id})">Excluir</button></td>
             </tr>`).join('');
-    } catch (e) { document.getElementById('docs-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
 };
 
 // --- DOCUMENTOS PENDENTES ---
@@ -662,14 +679,14 @@ views['notas-fiscais'] = async function() {
         <div class="table-card">
             <div class="table-header"><div><h3>Notas Fiscais</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalNF()">+ Nova NF</button></div>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Empresa</th><th>Número</th><th>Competência</th><th>Valor</th><th>Status</th><th>Data</th></tr></thead>
+                <thead><tr><th>Empresa</th><th>Número</th><th>Competência</th><th>Valor</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
                 <tbody id="nf-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const nfs = await api('/api/notas-fiscais');
         const tb = document.getElementById('nf-tbody');
-        if (nfs.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhuma nota fiscal registrada.'); return; }
+        if (nfs.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhuma nota fiscal registrada.'); return; }
         tb.innerHTML = nfs.map(n => `
             <tr>
                 <td>${n.razaosocial || '—'}</td>
@@ -678,8 +695,9 @@ views['notas-fiscais'] = async function() {
                 <td>R$ ${Number(n.valor||0).toFixed(2)}</td>
                 <td><span class="badge badge-${n.status==='recebida'?'green':'grey'}">${(n.status||'recebida').toUpperCase()}</span></td>
                 <td class="text-secondary">${new Date(n.datacriacao).toLocaleDateString('pt-BR')}</td>
+                <td>${n.arquivonome ? `<a href="/api/notas-fiscais/download/${n.id}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a> ` : ''}<button class="btn-sm btn-sm-red" onclick="deletarNF(${n.id})">Excluir</button></td>
             </tr>`).join('');
-    } catch (e) { document.getElementById('nf-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+    } catch (e) { document.getElementById('nf-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
 };
 
 // --- GUIAS / IMPOSTOS ---
@@ -691,14 +709,14 @@ views.guias = async function() {
         <div class="table-card">
             <div class="table-header"><div><h3>Guias Cadastradas</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalGuia()">+ Nova Guia</button></div>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Empresa</th><th>Tipo</th><th>Competência</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Arquivo</th></tr></thead>
+                <thead><tr><th>Empresa</th><th>Tipo</th><th>Competência</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Arquivo</th><th>Ações</th></tr></thead>
                 <tbody id="guias-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const guias = await api('/api/guias');
         const tb = document.getElementById('guias-tbody');
-        if (guias.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhuma guia cadastrada.'); return; }
+        if (guias.length === 0) { tb.innerHTML = emptyRow(8, 'Nenhuma guia cadastrada.'); return; }
         tb.innerHTML = guias.map(g => `
             <tr>
                 <td>${g.razaosocial || '—'}</td>
@@ -708,8 +726,9 @@ views.guias = async function() {
                 <td class="text-secondary">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
                 <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
                 <td>${g.arquivonome ? `<a href="/api/guias/download/${g.id}" target="_blank" class="btn-sm btn-sm-blue">PDF</a>` : '—'}</td>
+                <td><button class="btn-sm btn-sm-red" onclick="deletarGuia(${g.id})">Excluir</button></td>
             </tr>`).join('');
-    } catch (e) { document.getElementById('guias-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
+    } catch (e) { document.getElementById('guias-tbody').innerHTML = emptyRow(8, 'Erro ao carregar.'); }
 };
 
 // --- FOLHA DE PAGAMENTO ---
@@ -915,6 +934,83 @@ views.chat = async function() {
     lucide.createIcons();
 };
 
+// --- CRM (Funil Kanban) ---
+const funilEtapas = [
+    { status: 'novo',       label: 'Novo',       color: '#a78bfa', bg: 'rgba(111,66,193,0.15)' },
+    { status: 'contatado',  label: 'Em Contato',  color: '#60a5fa', bg: 'rgba(59,130,246,0.15)' },
+    { status: 'negociando', label: 'Proposta',    color: '#fbbf24', bg: 'rgba(217,119,6,0.15)' },
+    { status: 'ganho',      label: 'Fechado',     color: '#4ade80', bg: 'rgba(22,163,74,0.15)' }
+];
+let kanbanDragId = null;
+
+views.crm = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">CRM - Funil de Vendas</h1>
+        <p class="page-subtitle">Arraste os contatos entre as colunas conforme o avanço</p>
+        <div class="metrics-grid" id="crm-metrics"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="font-size:16px;font-weight:700;">Funil</h3>
+            <button class="btn-sm btn-sm-blue" onclick="abrirModalCRM()">+ Novo Contato</button>
+        </div>
+        <div class="kanban-board" id="kanban-board"></div>`;
+    try {
+        const contatos = await api('/api/crm/contatos');
+        // Métricas
+        const total = contatos.length;
+        const leads = contatos.filter(c => c.tipo === 'lead').length;
+        const clientes = contatos.filter(c => c.tipo === 'cliente').length;
+        const fechados = contatos.filter(c => c.status === 'ganho').length;
+        document.getElementById('crm-metrics').innerHTML = `
+            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Total</div><div class="metric-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa;"><i data-lucide="users"></i></div></div><div class="metric-value">${total}</div><div class="metric-sub">contatos</div></div>
+            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Leads</div><div class="metric-icon" style="background:rgba(217,119,6,0.15);color:#fbbf24;"><i data-lucide="user-plus"></i></div></div><div class="metric-value">${leads}</div><div class="metric-sub">em prospecção</div></div>
+            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Clientes</div><div class="metric-icon" style="background:rgba(22,163,74,0.15);color:#4ade80;"><i data-lucide="user-check"></i></div></div><div class="metric-value">${clientes}</div><div class="metric-sub">convertidos</div></div>
+            <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Fechados</div><div class="metric-icon" style="background:rgba(22,163,74,0.15);color:#4ade80;"><i data-lucide="trophy"></i></div></div><div class="metric-value">${fechados}</div><div class="metric-sub">negócios ganhos</div></div>`;
+        // Monta as colunas do funil
+        const board = document.getElementById('kanban-board');
+        board.innerHTML = funilEtapas.map(etapa => {
+            const cards = contatos.filter(c => c.status === etapa.status);
+            return `
+                <div class="kanban-column">
+                    <div class="kanban-column-header">
+                        <span class="kanban-column-title" style="color:${etapa.color};">${etapa.label}</span>
+                        <span class="kanban-column-count" style="background:${etapa.bg};color:${etapa.color};">${cards.length}</span>
+                    </div>
+                    <div class="kanban-cards" data-status="${etapa.status}" ondragover="kanbanDragOver(event)" ondrop="kanbanDrop(event,'${etapa.status}')" ondragleave="kanbanDragLeave(event)">
+                        ${cards.length === 0 ? '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:20px;">Arraste aqui</div>' : cards.map(c => `
+                        <div class="kanban-card" draggable="true" ondragstart="kanbanDragStart(event,${c.id})" ondragend="kanbanDragEnd(event)">
+                            <div class="kanban-card-name">${c.nome}</div>
+                            ${c.empresa ? `<div class="kanban-card-info">${c.empresa}</div>` : ''}
+                            ${c.email ? `<div class="kanban-card-info">${c.email}</div>` : ''}
+                            ${c.telefone ? `<div class="kanban-card-info">${c.telefone}</div>` : ''}
+                            <div class="kanban-card-actions">
+                                <button class="btn-sm btn-sm-blue" onclick="abrirModalCRMEditar(${c.id})">Editar</button>
+                                <button class="btn-sm btn-sm-red" onclick="deletarCRM(${c.id})">Excluir</button>
+                            </div>
+                        </div>`).join('')}
+                    </div>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        document.getElementById('kanban-board').innerHTML = '<div style="color:var(--text-muted);padding:40px;">Erro ao carregar.</div>';
+    }
+    lucide.createIcons();
+};
+
+// Kanban drag-and-drop handlers
+function kanbanDragStart(e, id) { kanbanDragId = id; e.target.classList.add('dragging'); }
+function kanbanDragEnd(e) { e.target.classList.remove('dragging'); }
+function kanbanDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function kanbanDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+async function kanbanDrop(e, status) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    if (!kanbanDragId) return;
+    const id = kanbanDragId;
+    kanbanDragId = null;
+    try { await api(`/api/crm/contatos/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }); navigate('crm'); }
+    catch (e) { alert(e.message); }
+}
+
 // --- RELATÓRIOS ---
 views.relatorios = async function() {
     try {
@@ -1017,6 +1113,10 @@ function abrirModalPendencia() { preencherSelectEmpresas('pend-empresa'); abrirM
 function preencherSelectEmpresas(selectId) {
     const sel = document.getElementById(selectId);
     if (!sel) return;
+    if (empresasCache.length === 0) {
+        sel.innerHTML = '<option value="">Nenhuma empresa cadastrada</option>';
+        return;
+    }
     sel.innerHTML = '<option value="">Selecione...</option>' + empresasCache.map(e => `<option value="${e.id}">${e.razaosocial}</option>`).join('');
 }
 
@@ -1118,7 +1218,6 @@ async function alterarCalStatus(id, status) { try { await api(`/api/calendario/$
 
 // Modais dinâmicos (NF, Folha, Financeiro, Calendario, Aviso, Procuração)
 function abrirModalNF() {
-    preencherSelectEmpresas('_nf_emp');
     showDynamicModal('Nova Nota Fiscal', `
         <form onsubmit="criarNF(event)">
             <div class="form-group"><label>Empresa</label><select id="_nf_emp" required></select></div>
@@ -1130,6 +1229,7 @@ function abrirModalNF() {
             <div class="form-group"><label>Arquivo (opcional)</label><input type="file" id="_nf_file" accept="application/pdf"></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
         </form>`);
+    preencherSelectEmpresas('_nf_emp');
 }
 async function criarNF(e) {
     e.preventDefault();
@@ -1144,7 +1244,6 @@ async function criarNF(e) {
 }
 
 function abrirModalFolha() {
-    preencherSelectEmpresas('_folha_emp');
     showDynamicModal('Nova Folha de Pagamento', `
         <form onsubmit="criarFolha(event)">
             <div class="form-group"><label>Empresa</label><select id="_folha_emp" required></select></div>
@@ -1155,6 +1254,7 @@ function abrirModalFolha() {
             </div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
         </form>`);
+    preencherSelectEmpresas('_folha_emp');
 }
 async function criarFolha(e) {
     e.preventDefault();
@@ -1167,7 +1267,6 @@ async function criarFolha(e) {
 }
 
 function abrirModalFin() {
-    preencherSelectEmpresas('_fin_emp');
     showDynamicModal('Novo Lançamento Financeiro', `
         <form onsubmit="criarFin(event)">
             <div class="form-group"><label>Empresa</label><select id="_fin_emp"></select></div>
@@ -1179,6 +1278,7 @@ function abrirModalFin() {
             <div class="form-group"><label>Vencimento</label><input type="date" id="_fin_venc"></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
         </form>`);
+    preencherSelectEmpresas('_fin_emp');
 }
 async function criarFin(e) {
     e.preventDefault();
@@ -1192,7 +1292,6 @@ async function criarFin(e) {
 }
 
 function abrirModalCalendario() {
-    preencherSelectEmpresas('_cal_emp');
     showDynamicModal('Novo Evento do Calendário', `
         <form onsubmit="criarCal(event)">
             <div class="form-group"><label>Empresa (opcional)</label><select id="_cal_emp"><option value="">Geral</option></select></div>
@@ -1204,6 +1303,7 @@ function abrirModalCalendario() {
             </div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
         </form>`);
+    preencherSelectEmpresas('_cal_emp');
 }
 async function criarCal(e) {
     e.preventDefault();
@@ -1217,7 +1317,6 @@ async function criarCal(e) {
 }
 
 function abrirModalAviso() {
-    preencherSelectEmpresas('_aviso_emp');
     showDynamicModal('Novo Aviso', `
         <form onsubmit="criarAviso(event)">
             <div class="form-group"><label>Empresa (opcional)</label><select id="_aviso_emp"><option value="">Geral</option></select></div>
@@ -1226,6 +1325,7 @@ function abrirModalAviso() {
             <div class="form-group"><label>Tipo</label><select id="_aviso_tipo"><option value="info">Info</option><option value="urgente">Urgente</option><option value="lembrete">Lembrete</option></select></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Enviar</button></div>
         </form>`);
+    preencherSelectEmpresas('_aviso_emp');
 }
 async function criarAviso(e) {
     e.preventDefault();
@@ -1238,7 +1338,6 @@ async function criarAviso(e) {
 }
 
 function abrirModalProc() {
-    preencherSelectEmpresas('_proc_emp');
     showDynamicModal('Nova Procuração', `
         <form onsubmit="criarProc(event)">
             <div class="form-group"><label>Empresa</label><select id="_proc_emp" required></select></div>
@@ -1247,6 +1346,7 @@ function abrirModalProc() {
             <div class="form-group"><label>Observação</label><textarea id="_proc_obs" rows="2" placeholder="Nunca armazene senhas de certificados"></textarea></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
         </form>`);
+    preencherSelectEmpresas('_proc_emp');
 }
 async function criarProc(e) {
     e.preventDefault();
@@ -1256,6 +1356,98 @@ async function criarProc(e) {
         validade: document.getElementById('_proc_val').value || null,
         observacao: document.getElementById('_proc_obs').value
     })}); fecharModal('modal-dynamic'); navigate('procuracoes'); } catch (e) { alert(e.message); }
+}
+
+// CRM - Funções
+function abrirModalCRM() {
+    showDynamicModal('Novo Contato CRM', `
+        <form onsubmit="criarCRM(event)">
+            <div class="form-group"><label>Nome *</label><input type="text" id="_crm_nome" required placeholder="Nome do contato"></div>
+            <div class="form-grid">
+                <div class="form-group"><label>E-mail</label><input type="email" id="_crm_email" placeholder="email@exemplo.com"></div>
+                <div class="form-group"><label>Telefone</label><input type="text" id="_crm_tel" placeholder="(00) 00000-0000"></div>
+            </div>
+            <div class="form-grid">
+                <div class="form-group"><label>Empresa</label><input type="text" id="_crm_empresa" placeholder="Empresa do contato"></div>
+                <div class="form-group"><label>Cargo</label><input type="text" id="_crm_cargo" placeholder="Cargo"></div>
+            </div>
+            <div class="form-grid">
+                <div class="form-group"><label>Tipo</label><select id="_crm_tipo"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="cliente">Cliente</option><option value="inativo">Inativo</option></select></div>
+                <div class="form-group"><label>Status</label><select id="_crm_status"><option value="novo">Novo</option><option value="contatado">Contatado</option><option value="negociando">Negociando</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option></select></div>
+            </div>
+            <div class="form-group"><label>Observação</label><textarea id="_crm_obs" rows="2" placeholder="Anotações sobre o contato..."></textarea></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarCRM(e) {
+    e.preventDefault();
+    try { await api('/api/crm/contatos', { method: 'POST', body: JSON.stringify({
+        nome: document.getElementById('_crm_nome').value,
+        email: document.getElementById('_crm_email').value,
+        telefone: document.getElementById('_crm_tel').value,
+        empresa: document.getElementById('_crm_empresa').value,
+        cargo: document.getElementById('_crm_cargo').value,
+        tipo: document.getElementById('_crm_tipo').value,
+        status: document.getElementById('_crm_status').value,
+        observacao: document.getElementById('_crm_obs').value
+    })}); fecharModal('modal-dynamic'); navigate('crm'); } catch (e) { alert(e.message); }
+}
+
+async function abrirModalCRMEditar(id) {
+    try {
+        const contatos = await api('/api/crm/contatos');
+        const c = contatos.find(x => x.id == id);
+        if (!c) return;
+        showDynamicModal('Editar Contato', `
+            <form onsubmit="editarCRM(event, ${id})">
+                <div class="form-group"><label>Nome *</label><input type="text" id="_crm_nome" required value="${c.nome || ''}"></div>
+                <div class="form-grid">
+                    <div class="form-group"><label>E-mail</label><input type="email" id="_crm_email" value="${c.email || ''}"></div>
+                    <div class="form-group"><label>Telefone</label><input type="text" id="_crm_tel" value="${c.telefone || ''}"></div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Empresa</label><input type="text" id="_crm_empresa" value="${c.empresa || ''}"></div>
+                    <div class="form-group"><label>Cargo</label><input type="text" id="_crm_cargo" value="${c.cargo || ''}"></div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Tipo</label><select id="_crm_tipo"><option value="lead" ${c.tipo==='lead'?'selected':''}>Lead</option><option value="prospect" ${c.tipo==='prospect'?'selected':''}>Prospect</option><option value="cliente" ${c.tipo==='cliente'?'selected':''}>Cliente</option><option value="inativo" ${c.tipo==='inativo'?'selected':''}>Inativo</option></select></div>
+                    <div class="form-group"><label>Status</label><select id="_crm_status"><option value="novo" ${c.status==='novo'?'selected':''}>Novo</option><option value="contatado" ${c.status==='contatado'?'selected':''}>Contatado</option><option value="negociando" ${c.status==='negociando'?'selected':''}>Negociando</option><option value="ganho" ${c.status==='ganho'?'selected':''}>Ganho</option><option value="perdido" ${c.status==='perdido'?'selected':''}>Perdido</option></select></div>
+                </div>
+                <div class="form-group"><label>Observação</label><textarea id="_crm_obs" rows="2">${c.observacao || ''}</textarea></div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+            </form>`);
+    } catch (e) { alert(e.message); }
+}
+async function editarCRM(e, id) {
+    e.preventDefault();
+    try { await api(`/api/crm/contatos/${id}`, { method: 'PUT', body: JSON.stringify({
+        nome: document.getElementById('_crm_nome').value,
+        email: document.getElementById('_crm_email').value,
+        telefone: document.getElementById('_crm_tel').value,
+        empresa: document.getElementById('_crm_empresa').value,
+        cargo: document.getElementById('_crm_cargo').value,
+        tipo: document.getElementById('_crm_tipo').value,
+        status: document.getElementById('_crm_status').value,
+        observacao: document.getElementById('_crm_obs').value
+    })}); fecharModal('modal-dynamic'); navigate('crm'); } catch (e) { alert(e.message); }
+}
+async function deletarCRM(id) {
+    if (!confirm('Excluir este contato?')) return;
+    try { await api(`/api/crm/contatos/${id}`, { method: 'DELETE' }); navigate('crm'); } catch (e) { alert(e.message); }
+}
+
+// Deletar documentos, NFs e guias
+async function deletarDocumento(id) {
+    if (!confirm('Excluir este documento?')) return;
+    try { await api(`/api/documentos/${id}`, { method: 'DELETE' }); navigate('docs-recebidos'); } catch (e) { alert(e.message); }
+}
+async function deletarNF(id) {
+    if (!confirm('Excluir esta nota fiscal?')) return;
+    try { await api(`/api/notas-fiscais/${id}`, { method: 'DELETE' }); navigate('notas-fiscais'); } catch (e) { alert(e.message); }
+}
+async function deletarGuia(id) {
+    if (!confirm('Excluir esta guia?')) return;
+    try { await api(`/api/guias/${id}`, { method: 'DELETE' }); navigate('guias'); } catch (e) { alert(e.message); }
 }
 
 function showDynamicModal(title, body) {

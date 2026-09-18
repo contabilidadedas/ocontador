@@ -348,22 +348,23 @@ clientViews.documentos = async function() {
         <div class="card">
             <h3>📄 Documentos Enviados</h3>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Categoria</th><th>Descrição</th><th>Status</th><th>Data</th></tr></thead>
+                <thead><tr><th>Categoria</th><th>Descrição</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
                 <tbody id="docs-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const data = await api('/api/cliente/dashboard');
         const tb = document.getElementById('docs-tbody');
-        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento enviado.</td></tr>'; return; }
+        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento enviado.</td></tr>'; return; }
         tb.innerHTML = data.documentos.map(d => `
             <tr>
                 <td><span class="badge badge-purple">${d.categoria || '—'}</span></td>
                 <td>${d.descricao || '—'}</td>
                 <td><span class="badge badge-${d.status==='recebido'?'green':'grey'}">${(d.status||'pendente').toUpperCase()}</span></td>
                 <td style="color:var(--text-secondary);">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
+                <td><button class="btn-sm" style="background:rgba(220,38,38,0.15);color:#f87171;" onclick="deletarDocCliente(${d.id})">Excluir</button></td>
             </tr>`).join('');
-    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);">Erro.</td></tr>'; }
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">Erro.</td></tr>'; }
     lucide.createIcons();
 };
 
@@ -441,6 +442,11 @@ clientViews.guias = async function() {
 
 window.copiarPix = function(code) {
     navigator.clipboard.writeText(code).then(() => alert('Código PIX copiado!')).catch(() => alert('Erro ao copiar.'));
+};
+
+window.deletarDocCliente = async function(id) {
+    if (!confirm('Excluir este documento?')) return;
+    try { await api(`/api/documentos/cliente/${id}`, { method: 'DELETE' }); navigate('documentos'); } catch (e) { alert(e.message); }
 };
 
 // --- CALENDÁRIO ---
