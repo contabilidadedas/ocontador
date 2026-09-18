@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel do Contador - Sistema de Gestão</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-body: #0c0f16;
+            --bg-sidebar: #12161f;
+            --bg-card: #1a1f2b;
+            --bg-card-hover: #1e2433;
+            --bg-active: #2c3e60;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a5b1;
+            --text-muted: #6b7280;
+            --border: #1e2433;
+            --border-light: #2a3142;
+            --accent-blue: #3b82f6;
+            --accent-purple: #6f42c1;
+            --badge-purple: #6f42c1;
+            --badge-grey: #6c757d;
+            --badge-orange: #d97706;
+            --badge-brown: #92400e;
+            --badge-green: #16a34a;
+            --badge-red: #dc2626;
+            --sidebar-w: 260px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-body); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
+
+        /* LAYOUT */
+        .layout { display: flex; min-height: 100vh; }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: var(--sidebar-w);
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+            overflow-y: auto;
+            z-index: 100;
+            transition: transform 0.3s;
+        }
+        .sidebar-header { padding: 20px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+        .sidebar-logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6, #6f42c1); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+        .sidebar-title { font-size: 15px; font-weight: 700; color: var(--text-primary); line-height: 1.3; }
+        .sidebar-subtitle { font-size: 11px; color: var(--text-secondary); }
+
+        .nav-section { padding: 16px 0 8px; }
+        .nav-section-title { padding: 0 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 8px; }
+        .nav-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 10px 20px; font-size: 14px; font-weight: 500;
+            color: var(--text-secondary); cursor: pointer;
+            transition: all 0.15s; border-left: 3px solid transparent;
+            text-decoration: none;
+        }
+        .nav-item:hover { background: rgba(255,255,255,0.03); color: var(--text-primary); }
+        .nav-item.active { background: var(--bg-active); color: var(--text-primary); border-left-color: var(--accent-blue); }
+        .nav-item i { width: 18px; height: 18px; flex-shrink: 0; }
+        .nav-item .badge-count { margin-left: auto; background: var(--accent-blue); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+
+        .sidebar-footer { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--border); }
+        .btn-logout { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; background: transparent; border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .btn-logout:hover { background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3); color: #f87171; }
+
+        /* MAIN */
+        .main { flex: 1; margin-left: var(--sidebar-w); min-height: 100vh; display: flex; flex-direction: column; }
+
+        /* TOPBAR */
+        .topbar { background: var(--bg-body); border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .topbar-welcome { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+        .topbar-welcome span { color: var(--text-secondary); font-weight: 400; }
+        .topbar-actions { display: flex; gap: 10px; }
+        .btn-top { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; text-decoration: none; }
+        .btn-top-primary { background: var(--accent-blue); color: #fff; }
+        .btn-top-primary:hover { background: #2563eb; }
+        .btn-top-secondary { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-light); }
+        .btn-top-secondary:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+        .btn-top i { width: 16px; height: 16px; }
+
+        /* CONTENT */
+        .content { padding: 28px; flex: 1; }
+        .page-title { font-size: 28px; font-weight: 800; color: var(--text-primary); margin-bottom: 4px; }
+        .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 28px; }
+
+        /* METRIC CARDS */
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .metric-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; transition: all 0.2s; }
+        .metric-card:hover { border-color: var(--border-light); background: var(--bg-card-hover); }
+        .metric-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .metric-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-secondary); }
+        .metric-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .metric-icon i { width: 18px; height: 18px; }
+        .metric-value { font-size: 32px; font-weight: 800; color: var(--text-primary); line-height: 1; }
+        .metric-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+        /* STATUS SECTION */
+        .status-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+        .status-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; display: flex; align-items: center; gap: 14px; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+        .status-dot.urgente { background: var(--badge-red); box-shadow: 0 0 8px rgba(220,38,38,0.4); }
+        .status-dot.atencao { background: var(--badge-orange); box-shadow: 0 0 8px rgba(217,119,6,0.4); }
+        .status-dot.dia { background: var(--badge-green); box-shadow: 0 0 8px rgba(22,163,74,0.4); }
+        .status-info { flex: 1; }
+        .status-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+        .status-count { font-size: 11px; color: var(--text-secondary); }
+        .status-number { font-size: 24px; font-weight: 800; }
+
+        /* TABLE */
+        .table-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .table-header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .table-header h3 { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+        .table-header p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th { padding: 12px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); text-align: left; border-bottom: 1px solid var(--border); }
+        .data-table td { padding: 14px 24px; font-size: 14px; color: var(--text-primary); border-bottom: 1px solid var(--border); }
+        .data-table tr:last-child td { border-bottom: none; }
+        .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+        .data-table .text-secondary { color: var(--text-secondary); }
+        .data-table .text-muted { color: var(--text-muted); }
+
+        /* BADGES */
+        .badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; white-space: nowrap; }
+        .badge-urgente { background: rgba(220,38,38,0.15); color: #f87171; }
+        .badge-atencao { background: rgba(217,119,6,0.15); color: #fbbf24; }
+        .badge-dia { background: rgba(22,163,74,0.15); color: #4ade80; }
+        .badge-purple { background: rgba(111,66,193,0.15); color: #a78bfa; }
+        .badge-grey { background: rgba(108,117,125,0.15); color: #adb5bd; }
+        .badge-orange { background: rgba(217,119,6,0.15); color: #fbbf24; }
+        .badge-green { background: rgba(22,163,74,0.15); color: #4ade80; }
+        .badge-brown { background: rgba(146,64,14,0.15); color: #d97706; }
+        .badge-blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
+
+        /* FORMS */
+        .form-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; padding: 10px 14px; background: var(--bg-body); border: 1px solid var(--border-light);
+            border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none; transition: border-color 0.15s;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent-blue); }
+        .form-group textarea { resize: vertical; min-height: 60px; }
+        .btn-submit { padding: 12px 24px; background: var(--accent-blue); color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+        .btn-submit:hover { background: #2563eb; }
+        .btn-cancel { padding: 12px 24px; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-light); border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+        .btn-sm-blue { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .btn-sm-blue:hover { background: rgba(59,130,246,0.25); }
+        .btn-sm-green { background: rgba(22,163,74,0.15); color: #4ade80; }
+        .btn-sm-green:hover { background: rgba(22,163,74,0.25); }
+        .btn-sm-red { background: rgba(220,38,38,0.15); color: #f87171; }
+        .btn-sm-red:hover { background: rgba(220,38,38,0.25); }
+
+        /* MODAL */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+        .modal-overlay.active { display: flex; }
+        .modal-card { background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 16px; width: 100%; max-width: 520px; padding: 28px; max-height: 90vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .modal-header h3 { font-size: 20px; font-weight: 700; }
+        .modal-close { background: transparent; border: none; color: var(--text-secondary); font-size: 24px; cursor: pointer; padding: 0; line-height: 1; }
+        .modal-close:hover { color: var(--text-primary); }
+
+        /* ALERT */
+        .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .alert.show { display: block; }
+        .alert-success { background: rgba(22,163,74,0.1); border: 1px solid rgba(22,163,74,0.2); color: #4ade80; }
+        .alert-error { background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.2); color: #f87171; }
+
+        /* CHAT */
+        .chat-container { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; height: calc(100vh - 220px); }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .chat-msg { max-width: 70%; padding: 10px 16px; border-radius: 12px; font-size: 14px; line-height: 1.4; }
+        .chat-msg.contador { align-self: flex-end; background: var(--accent-blue); color: #fff; }
+        .chat-msg.cliente { align-self: flex-start; background: var(--bg-body); border: 1px solid var(--border-light); color: var(--text-primary); }
+        .chat-msg-time { font-size: 10px; opacity: 0.6; margin-top: 4px; }
+        .chat-input { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; }
+        .chat-input input { flex: 1; padding: 12px 16px; background: var(--bg-body); border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none; }
+        .chat-input input:focus { border-color: var(--accent-blue); }
+
+        /* EMPTY STATE */
+        .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); }
+        .empty-state i { width: 48px; height: 48px; margin-bottom: 12px; }
+        .empty-state p { font-size: 14px; }
+
+        /* CHECKLIST */
+        .checklist-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+        .checklist-status { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .checklist-status.recebido { background: var(--badge-green); }
+        .checklist-status.pendente { background: var(--badge-red); }
+        .checklist-status.aguardando { background: var(--badge-orange); }
+        .checklist-status.calculado { background: var(--badge-blue); }
+        .checklist-status.disponivel { background: var(--badge-green); }
+
+        /* MOBILE TOGGLE */
+        .mobile-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 101; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; padding: 10px; cursor: pointer; color: var(--text-primary); }
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .main { margin-left: 0; }
+            .mobile-toggle { display: block; }
+            .metrics-grid { grid-template-columns: 1fr 1fr; }
+            .status-row { grid-template-columns: 1fr; }
+            .form-grid { grid-template-columns: 1fr; }
+            .topbar-welcome { font-size: 13px; }
+            .content { padding: 16px; }
+        }
+        .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
+        .sidebar-overlay.active { display: block; }
+    </style>
+</head>
+<body>
+    <button class="mobile-toggle" onclick="toggleSidebar()"><i data-lucide="menu"></i></button>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+    <div class="layout">
+        <!-- SIDEBAR -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">📊</div>
+                <div>
+                    <div class="sidebar-title" id="sidebar-escritorio">Escritório</div>
+                    <div class="sidebar-subtitle">Painel do Contador</div>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Principal</div>
+                <a class="nav-item active" data-view="dashboard" onclick="navigate('dashboard')"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Cadastros</div>
+                <a class="nav-item" data-view="clientes" onclick="navigate('clientes')"><i data-lucide="users"></i> Clientes</a>
+                <a class="nav-item" data-view="empresas" onclick="navigate('empresas')"><i data-lucide="building-2"></i> Empresas</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Documentos</div>
+                <a class="nav-item" data-view="docs-recebidos" onclick="navigate('docs-recebidos')"><i data-lucide="file-check"></i> Documentos Recebidos</a>
+                <a class="nav-item" data-view="docs-pendentes" onclick="navigate('docs-pendentes')"><i data-lucide="file-clock"></i> Documentos Pendentes</a>
+                <a class="nav-item" data-view="notas-fiscais" onclick="navigate('notas-fiscais')"><i data-lucide="receipt"></i> Notas Fiscais</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Financeiro</div>
+                <a class="nav-item" data-view="guias" onclick="navigate('guias')"><i data-lucide="file-text"></i> Impostos e Guias</a>
+                <a class="nav-item" data-view="folha" onclick="navigate('folha')"><i data-lucide="users-round"></i> Folha de Pagamento</a>
+                <a class="nav-item" data-view="financeiro" onclick="navigate('financeiro')"><i data-lucide="dollar-sign"></i> Financeiro/Honorários</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Obrigações</div>
+                <a class="nav-item" data-view="calendario" onclick="navigate('calendario')"><i data-lucide="calendar"></i> Calendário de Obrigações</a>
+                <a class="nav-item" data-view="pendencias" onclick="navigate('pendencias')"><i data-lucide="alert-triangle"></i> Pendências</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Comunicação</div>
+                <a class="nav-item" data-view="avisos" onclick="navigate('avisos')"><i data-lucide="bell"></i> Avisos e Notificações</a>
+                <a class="nav-item" data-view="chat" onclick="navigate('chat')"><i data-lucide="message-square"></i> Chat com Cliente</a>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Sistema</div>
+                <a class="nav-item" data-view="relatorios" onclick="navigate('relatorios')"><i data-lucide="bar-chart-3"></i> Relatórios</a>
+                <a class="nav-item" data-view="procuracoes" onclick="navigate('procuracoes')"><i data-lucide="shield-check"></i> Procurações e Certificados</a>
+                <a class="nav-item" data-view="configuracoes" onclick="navigate('configuracoes')"><i data-lucide="settings"></i> Configurações</a>
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="btn-logout" onclick="fazerLogout()"><i data-lucide="log-out" style="width:16px;height:16px;"></i> Sair</button>
+            </div>
+        </aside>
+
+        <!-- MAIN -->
+        <div class="main">
+            <header class="topbar">
+                <div class="topbar-welcome">Bem-vindo, <span id="topbar-nome">Contador</span>!</div>
+                <div class="topbar-actions">
+                    <button class="btn-top btn-top-primary" onclick="abrirModalEmpresa()"><i data-lucide="plus"></i> Nova Empresa</button>
+                    <button class="btn-top btn-top-secondary" onclick="abrirModalGuia()"><i data-lucide="plus"></i> Nova Guia</button>
+                </div>
+            </header>
+            <div class="content" id="content"></div>
+        </div>
+    </div>
+
+    <!-- MODAL EMPRESA -->
+    <div class="modal-overlay" id="modal-empresa">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Cadastrar Nova Empresa</h3>
+                <button class="modal-close" onclick="fecharModal('modal-empresa')">&times;</button>
+            </div>
+            <div class="alert" id="alert-empresa"></div>
+            <form id="form-empresa" onsubmit="cadastrarEmpresa(event)">
+                <div class="form-group">
+                    <label>CNPJ</label>
+                    <input type="text" id="emp-cnpj" required placeholder="00.000.000/0001-00" onblur="consultarCnpj(this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Razão Social</label>
+                    <input type="text" id="emp-razao" required placeholder="Razão Social">
+                </div>
+                <div class="form-group">
+                    <label>E-mail da Empresa</label>
+                    <input type="email" id="emp-email" placeholder="empresa@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Senha Provisória</label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="emp-senha" required readonly style="flex:1;">
+                        <button type="button" class="btn-sm btn-sm-green" onclick="gerarSenha()" style="white-space:nowrap;padding:10px 14px;">Gerar</button>
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn-cancel" onclick="fecharModal('modal-empresa')">Cancelar</button>
+                    <button type="submit" class="btn-submit">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL GUIA -->
+    <div class="modal-overlay" id="modal-guia">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Nova Guia de Imposto</h3>
+                <button class="modal-close" onclick="fecharModal('modal-guia')">&times;</button>
+            </div>
+            <div class="alert" id="alert-guia"></div>
+            <form id="form-guia" onsubmit="cadastrarGuia(event)">
+                <div class="form-group">
+                    <label>Empresa</label>
+                    <select id="guia-empresa" required></select>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tipo de Imposto</label>
+                        <select id="guia-tipo"><option value="DAS">DAS</option><option value="DARF">DARF</option><option value="GPS">GPS</option><option value="ISS">ISS</option><option value="FGTS">FGTS</option><option value="INSS">INSS</option><option value="Outros">Outros</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Competência</label>
+                        <input type="text" id="guia-comp" required placeholder="MM/AAAA">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Valor (R$)</label>
+                        <input type="text" id="guia-valor" required placeholder="0,00">
+                    </div>
+                    <div class="form-group">
+                        <label>Vencimento</label>
+                        <input type="date" id="guia-venc" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>PIX (opcional)</label>
+                    <textarea id="guia-pix" rows="2" placeholder="Código PIX..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Arquivo PDF (opcional)</label>
+                    <input type="file" id="guia-arquivo" accept="application/pdf">
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn-cancel" onclick="fecharModal('modal-guia')">Cancelar</button>
+                    <button type="submit" class="btn-submit">Enviar Guia</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL PENDÊNCIA -->
+    <div class="modal-overlay" id="modal-pendencia">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Nova Pendência</h3>
+                <button class="modal-close" onclick="fecharModal('modal-pendencia')">&times;</button>
+            </div>
+            <div class="alert" id="alert-pendencia"></div>
+            <form onsubmit="criarPendencia(event)">
+                <div class="form-group">
+                    <label>Empresa</label>
+                    <select id="pend-empresa"></select>
+                </div>
+                <div class="form-group">
+                    <label>Descrição</label>
+                    <input type="text" id="pend-desc" required placeholder="Ex: Enviar notas fiscais de outubro">
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Prioridade</label>
+                        <select id="pend-prio"><option value="urgente">🔴 Urgente</option><option value="atencao" selected>🟡 Atenção</option><option value="media">🟢 Média</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Prazo</label>
+                        <input type="date" id="pend-prazo">
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn-cancel" onclick="fecharModal('modal-pendencia')">Cancelar</button>
+                    <button type="submit" class="btn-submit">Criar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+<script>
+const token = localStorage.getItem('tokenContador');
+const nomeEscritorio = localStorage.getItem('nomeEscritorio');
+let empresasCache = [];
+
+if (!token || token === 'null') {
+    localStorage.clear();
+    window.location.href = 'contador-login.html';
+}
+
+document.getElementById('topbar-nome').textContent = nomeEscritorio || 'Contador';
+document.getElementById('sidebar-escritorio').textContent = nomeEscritorio || 'Escritório';
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebarOverlay').classList.toggle('active');
+}
+
+function fazerLogout() {
+    localStorage.clear();
+    window.location.href = 'index.html';
+}
+
+function navigate(view) {
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`[data-view="${view}"]`)?.classList.add('active');
+    const c = document.getElementById('content');
+    c.innerHTML = '';
+    if (typeof views[view] === 'function') views[view]();
+    if (window.innerWidth <= 768) {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarOverlay').classList.remove('active');
+    }
+    lucide.createIcons();
+}
+
+// API helper
+async function api(url, opts = {}) {
+    const headers = { 'Authorization': `Bearer ${token}`, ...opts.headers };
+    if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const res = await fetch(url, { ...opts, headers });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch { data = { erro: 'Erro no servidor.' }; }
+    if (!res.ok) throw new Error(data.erro || 'Erro');
+    return data;
+}
+
+async function carregarEmpresasCache() {
+    try {
+        empresasCache = await api('/api/empresas');
+        return empresasCache;
+    } catch { return []; }
+}
+
+// ==========================================
+// VIEWS
+// ==========================================
+const views = {};
+
+// --- DASHBOARD ---
+views.dashboard = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Dashboard</h1>
+        <p class="page-subtitle">Visão geral do escritório contábil</p>
+        <div class="metrics-grid" id="metrics-grid"></div>
+        <div class="status-row" id="status-row"></div>
+        <div class="table-card">
+            <div class="table-header">
+                <div><h3>Pendências Recentes</h3><p>Últimas pendências cadastradas</p></div>
+                <button class="btn-sm btn-sm-blue" onclick="abrirModalPendencia()">+ Nova Pendência</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="data-table">
+                    <thead><tr><th>Empresa</th><th>Descrição</th><th>Prioridade</th><th>Status</th><th>Prazo</th></tr></thead>
+                    <tbody id="pendencias-tbody"></tbody>
+                </table>
+            </div>
+        </div>`;
+
+    try {
+        const [stats, pendencias] = await Promise.all([
+            api('/api/dashboard/stats'),
+            api('/api/dashboard/pendencias-recentes')
+        ]);
+
+        const cards = [
+            { label: 'Clientes', value: stats.clientes, sub: 'empresas ativas', icon: 'users', color: 'rgba(59,130,246,0.15)', iconColor: '#60a5fa' },
+            { label: 'Empresas', value: stats.clientes, sub: 'cadastradas', icon: 'building-2', color: 'rgba(111,66,193,0.15)', iconColor: '#a78bfa' },
+            { label: 'Documentos Hoje', value: stats.documentosHoje, sub: 'recebidos hoje', icon: 'file-text', color: 'rgba(22,163,74,0.15)', iconColor: '#4ade80' },
+            { label: 'Pendências', value: stats.pendencias, sub: 'em aberto', icon: 'alert-triangle', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
+            { label: 'Guias a Vencer', value: stats.guiasVencer, sub: 'próximos vencimentos', icon: 'calendar-clock', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' },
+            { label: 'Inadimplentes', value: stats.inadimplentes, sub: 'clientes em atraso', icon: 'circle-x', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' }
+        ];
+
+        document.getElementById('metrics-grid').innerHTML = cards.map(c => `
+            <div class="metric-card">
+                <div class="metric-card-top">
+                    <div class="metric-label">${c.label}</div>
+                    <div class="metric-icon" style="background:${c.color};color:${c.iconColor};"><i data-lucide="${c.icon}"></i></div>
+                </div>
+                <div class="metric-value">${c.value}</div>
+                <div class="metric-sub">${c.sub}</div>
+            </div>`).join('');
+
+        document.getElementById('status-row').innerHTML = `
+            <div class="status-card">
+                <div class="status-dot urgente"></div>
+                <div class="status-info"><div class="status-label">🔴 Urgente</div><div class="status-count">Pendências críticas</div></div>
+                <div class="status-number" style="color:#f87171;">${stats.status.urgente}</div>
+            </div>
+            <div class="status-card">
+                <div class="status-dot atencao"></div>
+                <div class="status-info"><div class="status-label">🟡 Atenção</div><div class="status-count">Requer atenção</div></div>
+                <div class="status-number" style="color:#fbbf24;">${stats.status.atencao}</div>
+            </div>
+            <div class="status-card">
+                <div class="status-dot dia"></div>
+                <div class="status-info"><div class="status-label">🟢 Em Dia</div><div class="status-count">Empresas regularizadas</div></div>
+                <div class="status-number" style="color:#4ade80;">${stats.status.emDia}</div>
+            </div>`;
+
+        const tb = document.getElementById('pendencias-tbody');
+        if (pendencias.length === 0) {
+            tb.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted);">Nenhuma pendência cadastrada.</td></tr>`;
+        } else {
+            tb.innerHTML = pendencias.map(p => `
+                <tr>
+                    <td>${p.razaosocial || '<span class="text-muted">—</span>'}</td>
+                    <td>${p.descricao}</td>
+                    <td><span class="badge badge-${p.prioridade}">${p.prioridade.toUpperCase()}</span></td>
+                    <td><span class="badge badge-${p.status === 'pendente' ? 'grey' : 'green'}">${p.status.toUpperCase()}</span></td>
+                    <td class="text-secondary">${p.prazo ? new Date(p.prazo).toLocaleDateString('pt-BR') : '—'}</td>
+                </tr>`).join('');
+        }
+    } catch (e) {
+        document.getElementById('metrics-grid').innerHTML = `<div style="color:var(--text-muted);">Erro ao carregar dados.</div>`;
+    }
+    lucide.createIcons();
+};
+
+// --- CLIENTES / EMPRESAS ---
+views.clientes = views.empresas = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Empresas Clientes</h1>
+        <p class="page-subtitle">Gerencie todas as empresas cadastradas</p>
+        <div class="table-card">
+            <div class="table-header">
+                <div><h3>Empresas</h3><p>${empresasCache.length} cadastradas</p></div>
+                <button class="btn-sm btn-sm-blue" onclick="abrirModalEmpresa()">+ Nova Empresa</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="data-table">
+                    <thead><tr><th>CNPJ</th><th>Razão Social</th><th>E-mail</th><th>Pendências</th><th>Guias</th><th>Status</th><th>Ações</th></tr></thead>
+                    <tbody id="emp-tbody"></tbody>
+                </table>
+            </div>
+        </div>`;
+
+    const tb = document.getElementById('emp-tbody');
+    if (empresasCache.length === 0) {
+        tb.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">Nenhuma empresa cadastrada.</td></tr>`;
+    } else {
+        tb.innerHTML = empresasCache.map(e => `
+            <tr>
+                <td class="text-secondary" style="font-family:monospace;font-size:13px;">${e.cnpj}</td>
+                <td style="font-weight:600;">${e.razaosocial}</td>
+                <td class="text-secondary">${e.emailempresa || '—'}</td>
+                <td>${e.total_pendencias || 0}</td>
+                <td>${e.guias_vencer || 0}</td>
+                <td>${e.inadimplente ? '<span class="badge badge-urgente">INADIMPLENTE</span>' : '<span class="badge badge-dia">EM DIA</span>'}</td>
+                <td>
+                    <button class="btn-sm btn-sm-blue" onclick="verEmpresa(${e.id})">Ver</button>
+                    <button class="btn-sm ${e.inadimplente ? 'btn-sm-green' : 'btn-sm-red'}" onclick="toggleInadimplente(${e.id}, ${!e.inadimplente})">${e.inadimplente ? 'Regularizar' : 'Marcar Inadimplente'}</button>
+                    <button class="btn-sm btn-sm-red" onclick="deletarEmpresa(${e.id}, '${e.razaosocial}')">Excluir</button>
+                </td>
+            </tr>`).join('');
+    }
+    lucide.createIcons();
+};
+
+// --- DOCUMENTOS RECEBIDOS ---
+views['docs-recebidos'] = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Documentos Recebidos</h1>
+        <p class="page-subtitle">Documentos enviados pelos clientes</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Recebidos</h3></div></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Categoria</th><th>Descrição</th><th>Enviado por</th><th>Data</th><th>Arquivo</th></tr></thead>
+                <tbody id="docs-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const docs = await api('/api/documentos?tipo=recebido');
+        const tb = document.getElementById('docs-tbody');
+        if (docs.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhum documento recebido.'); return; }
+        tb.innerHTML = docs.map(d => `
+            <tr>
+                <td>${d.razaosocial || '—'}</td>
+                <td><span class="badge badge-blue">${d.categoria || '—'}</span></td>
+                <td>${d.descricao || '—'}</td>
+                <td class="text-secondary">${d.enviado_por || '—'}</td>
+                <td class="text-secondary">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
+                <td>${d.arquivonome ? `<a href="/api/documentos/download/${d.id}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a>` : '—'}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- DOCUMENTOS PENDENTES ---
+views['docs-pendentes'] = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Documentos Pendentes</h1>
+        <p class="page-subtitle">Documentos aguardando envio do cliente</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Pendentes</h3></div></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Categoria</th><th>Descrição</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
+                <tbody id="docs-pend-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const docs = await api('/api/documentos?tipo=pendente');
+        const tb = document.getElementById('docs-pend-tbody');
+        if (docs.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhum documento pendente.'); return; }
+        tb.innerHTML = docs.map(d => `
+            <tr>
+                <td>${d.razaosocial || '—'}</td>
+                <td><span class="badge badge-orange">${d.categoria || '—'}</span></td>
+                <td>${d.descricao || '—'}</td>
+                <td><span class="badge badge-grey">${(d.status||'pendente').toUpperCase()}</span></td>
+                <td class="text-secondary">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
+                <td><button class="btn-sm btn-sm-green" onclick="marcarDocRecebido(${d.id})">Marcar Recebido</button></td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('docs-pend-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- NOTAS FISCAIS ---
+views['notas-fiscais'] = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Notas Fiscais</h1>
+        <p class="page-subtitle">Gerencie as notas fiscais recebidas</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Notas Fiscais</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalNF()">+ Nova NF</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Número</th><th>Competência</th><th>Valor</th><th>Status</th><th>Data</th></tr></thead>
+                <tbody id="nf-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const nfs = await api('/api/notas-fiscais');
+        const tb = document.getElementById('nf-tbody');
+        if (nfs.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhuma nota fiscal registrada.'); return; }
+        tb.innerHTML = nfs.map(n => `
+            <tr>
+                <td>${n.razaosocial || '—'}</td>
+                <td class="text-secondary">${n.numero || '—'}</td>
+                <td>${n.competencia || '—'}</td>
+                <td>R$ ${Number(n.valor||0).toFixed(2)}</td>
+                <td><span class="badge badge-${n.status==='recebida'?'green':'grey'}">${(n.status||'recebida').toUpperCase()}</span></td>
+                <td class="text-secondary">${new Date(n.datacriacao).toLocaleDateString('pt-BR')}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('nf-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- GUIAS / IMPOSTOS ---
+views.guias = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Impostos e Guias</h1>
+        <p class="page-subtitle">Gerencie as guias de impostos dos clientes</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Guias Cadastradas</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalGuia()">+ Nova Guia</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Tipo</th><th>Competência</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Arquivo</th></tr></thead>
+                <tbody id="guias-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const guias = await api('/api/guias');
+        const tb = document.getElementById('guias-tbody');
+        if (guias.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhuma guia cadastrada.'); return; }
+        tb.innerHTML = guias.map(g => `
+            <tr>
+                <td>${g.razaosocial || '—'}</td>
+                <td><span class="badge badge-blue">${g.tipoimposto || '—'}</span></td>
+                <td>${g.competencia || '—'}</td>
+                <td>R$ ${Number(g.valor||0).toFixed(2)}</td>
+                <td class="text-secondary">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
+                <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
+                <td>${g.arquivonome ? `<a href="/api/guias/download/${g.id}" target="_blank" class="btn-sm btn-sm-blue">PDF</a>` : '—'}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('guias-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
+};
+
+// --- FOLHA DE PAGAMENTO ---
+views.folha = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Folha de Pagamento</h1>
+        <p class="page-subtitle">Gerencie as folhas de pagamento das empresas</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Folhas</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalFolha()">+ Nova Folha</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Competência</th><th>Funcionários</th><th>Valor Total</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="folha-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const folhas = await api('/api/folha-pagamento');
+        const tb = document.getElementById('folha-tbody');
+        if (folhas.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhuma folha registrada.'); return; }
+        tb.innerHTML = folhas.map(f => `
+            <tr>
+                <td>${f.razaosocial || '—'}</td>
+                <td>${f.competencia || '—'}</td>
+                <td>${f.funcionarios || 0}</td>
+                <td>R$ ${Number(f.valor_total||0).toFixed(2)}</td>
+                <td><span class="badge badge-${f.status==='paga'?'green':f.status==='atrasada'?'urgente':'orange'}">${(f.status||'pendente').toUpperCase()}</span></td>
+                <td>
+                    <button class="btn-sm btn-sm-green" onclick="alterarFolhaStatus(${f.id},'paga')">Pagar</button>
+                    <button class="btn-sm btn-sm-red" onclick="alterarFolhaStatus(${f.id},'atrasada')">Atrasar</button>
+                </td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('folha-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- FINANCEIRO / HONORÁRIOS ---
+views.financeiro = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Financeiro / Honorários</h1>
+        <p class="page-subtitle">Controle de recebimentos e honorários</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Lançamentos</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalFin()">+ Novo Lançamento</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Descrição</th><th>Competência</th><th>Valor</th><th>Vencimento</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="fin-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const fins = await api('/api/financeiro');
+        const tb = document.getElementById('fin-tbody');
+        if (fins.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhum lançamento.'); return; }
+        tb.innerHTML = fins.map(f => `
+            <tr>
+                <td>${f.razaosocial || '—'}</td>
+                <td>${f.descricao || '—'}</td>
+                <td>${f.competencia || '—'}</td>
+                <td>R$ ${Number(f.valor||0).toFixed(2)}</td>
+                <td class="text-secondary">${f.vencimento ? new Date(f.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
+                <td><span class="badge badge-${f.status==='pago'?'green':f.status==='atrasado'?'urgente':'orange'}">${(f.status||'pendente').toUpperCase()}</span></td>
+                <td>
+                    <button class="btn-sm btn-sm-green" onclick="alterarFinStatus(${f.id},'pago')">Receber</button>
+                </td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('fin-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
+};
+
+// --- CALENDÁRIO ---
+views.calendario = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Calendário de Obrigações</h1>
+        <p class="page-subtitle">Vencimentos, obrigações e documentos a enviar</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Próximos Eventos</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalCalendario()">+ Novo Evento</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Data</th><th>Empresa</th><th>Título</th><th>Tipo</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="cal-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const eventos = await api('/api/calendario');
+        const tb = document.getElementById('cal-tbody');
+        if (eventos.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhum evento agendado.'); return; }
+        tb.innerHTML = eventos.map(e => `
+            <tr>
+                <td class="text-secondary">${new Date(e.dataevento).toLocaleDateString('pt-BR')}</td>
+                <td>${e.razaosocial || 'Geral'}</td>
+                <td style="font-weight:600;">${e.titulo}</td>
+                <td><span class="badge badge-purple">${(e.tipo||'obrigacao').toUpperCase()}</span></td>
+                <td><span class="badge badge-${e.status==='concluido'?'green':'orange'}">${(e.status||'pendente').toUpperCase()}</span></td>
+                <td><button class="btn-sm btn-sm-green" onclick="alterarCalStatus(${e.id},'concluido')">Concluir</button></td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('cal-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- PENDÊNCIAS ---
+views.pendencias = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Pendências</h1>
+        <p class="page-subtitle">Acompanhe quem precisa enviar alguma coisa</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Todas as Pendências</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalPendencia()">+ Nova Pendência</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Descrição</th><th>Prioridade</th><th>Status</th><th>Prazo</th><th>Ações</th></tr></thead>
+                <tbody id="pend-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const pendencias = await api('/api/pendencias');
+        const tb = document.getElementById('pend-tbody');
+        if (pendencias.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhuma pendência.'); return; }
+        tb.innerHTML = pendencias.map(p => `
+            <tr>
+                <td>${p.razaosocial || '—'}</td>
+                <td style="font-weight:500;">${p.descricao}</td>
+                <td><span class="badge badge-${p.prioridade}">${p.prioridade.toUpperCase()}</span></td>
+                <td><span class="badge badge-${p.status==='pendente'?'grey':'green'}">${p.status.toUpperCase()}</span></td>
+                <td class="text-secondary">${p.prazo ? new Date(p.prazo).toLocaleDateString('pt-BR') : '—'}</td>
+                <td>
+                    <button class="btn-sm btn-sm-green" onclick="resolverPendencia(${p.id})">Resolver</button>
+                    <button class="btn-sm btn-sm-red" onclick="deletarPendencia(${p.id})">Excluir</button>
+                </td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('pend-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- AVISOS ---
+views.avisos = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Avisos e Notificações</h1>
+        <p class="page-subtitle">Comunique-se com seus clientes</p>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Avisos</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalAviso()">+ Novo Aviso</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Título</th><th>Mensagem</th><th>Tipo</th><th>Lido</th><th>Data</th></tr></thead>
+                <tbody id="avisos-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const avisos = await api('/api/avisos');
+        const tb = document.getElementById('avisos-tbody');
+        if (avisos.length === 0) { tb.innerHTML = emptyRow(6, 'Nenhum aviso.'); return; }
+        tb.innerHTML = avisos.map(a => `
+            <tr>
+                <td>${a.razaosocial || 'Geral'}</td>
+                <td style="font-weight:600;">${a.titulo}</td>
+                <td class="text-secondary">${a.mensagem || '—'}</td>
+                <td><span class="badge badge-${a.tipo==='urgente'?'urgente':'blue'}">${(a.tipo||'info').toUpperCase()}</span></td>
+                <td>${a.lido ? '<span class="badge badge-green">SIM</span>' : '<span class="badge badge-grey">NÃO</span>'}</td>
+                <td class="text-secondary">${new Date(a.datacriacao).toLocaleDateString('pt-BR')}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('avisos-tbody').innerHTML = emptyRow(6, 'Erro ao carregar.'); }
+};
+
+// --- CHAT ---
+views.chat = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Chat com Cliente</h1>
+        <p class="page-subtitle">Converse diretamente com seus clientes</p>
+        <div style="display:flex;gap:16px;height:calc(100vh - 200px);">
+            <div style="width:240px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow-y:auto;">
+                <div style="padding:16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-secondary);">Empresas</div>
+                <div id="chat-empresas-list"></div>
+            </div>
+            <div class="chat-container" style="flex:1;">
+                <div class="chat-messages" id="chat-msgs"></div>
+                <div class="chat-input">
+                    <input type="text" id="chat-input-field" placeholder="Digite uma mensagem..." onkeydown="if(event.key==='Enter')enviarMsg()">
+                    <button class="btn-submit" onclick="enviarMsg()">Enviar</button>
+                </div>
+            </div>
+        </div>`;
+    let selectedEmpresa = null;
+    window.selectChatEmpresa = async function(id, nome) {
+        selectedEmpresa = id;
+        document.querySelectorAll('#chat-empresas-list .nav-item').forEach(el => el.classList.remove('active'));
+        event?.target?.closest('.nav-item')?.classList.add('active');
+        try {
+            const msgs = await api(`/api/chat/${id}`);
+            const c = document.getElementById('chat-msgs');
+            if (msgs.length === 0) { c.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">Nenhuma mensagem ainda.</div>'; return; }
+            c.innerHTML = msgs.map(m => `
+                <div class="chat-msg ${m.remetente}">${m.mensagem}<div class="chat-msg-time">${new Date(m.datacriacao).toLocaleString('pt-BR')}</div></div>`).join('');
+            c.scrollTop = c.scrollHeight;
+        } catch (e) { document.getElementById('chat-msgs').innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:40px;">Erro.</div>'; }
+    };
+    window.enviarMsg = async function() {
+        if (!selectedEmpresa) return alert('Selecione uma empresa.');
+        const input = document.getElementById('chat-input-field');
+        if (!input.value.trim()) return;
+        try {
+            await api('/api/chat', { method: 'POST', body: JSON.stringify({ empresa_id: selectedEmpresa, mensagem: input.value }) });
+            input.value = '';
+            selectChatEmpresa(selectedEmpresa);
+        } catch (e) { alert('Erro ao enviar.'); }
+    };
+    const list = document.getElementById('chat-empresas-list');
+    if (empresasCache.length === 0) { list.innerHTML = '<div style="padding:20px;color:var(--text-muted);font-size:13px;">Nenhuma empresa.</div>'; }
+    else { list.innerHTML = empresasCache.map(e => `<div class="nav-item" onclick="selectChatEmpresa(${e.id},'${e.razaosocial}')"><i data-lucide="building-2"></i> ${e.razaosocial}</div>`).join(''); }
+    lucide.createIcons();
+};
+
+// --- RELATÓRIOS ---
+views.relatorios = async function() {
+    try {
+        const [stats, empresas] = await Promise.all([api('/api/dashboard/stats'), api('/api/empresas')]);
+        document.getElementById('content').innerHTML = `
+            <h1 class="page-title">Relatórios</h1>
+            <p class="page-subtitle">Visão consolidada do escritório</p>
+            <div class="metrics-grid">
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Total de Clientes</div><div class="metric-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa;"><i data-lucide="users"></i></div></div><div class="metric-value">${stats.clientes}</div><div class="metric-sub">empresas ativas</div></div>
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Pendências</div><div class="metric-icon" style="background:rgba(217,119,6,0.15);color:#fbbf24;"><i data-lucide="alert-triangle"></i></div></div><div class="metric-value">${stats.pendencias}</div><div class="metric-sub">em aberto</div></div>
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Guias a Vencer</div><div class="metric-icon" style="background:rgba(220,38,38,0.15);color:#f87171;"><i data-lucide="calendar-clock"></i></div></div><div class="metric-value">${stats.guiasVencer}</div><div class="metric-sub">próximos vencimentos</div></div>
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Inadimplentes</div><div class="metric-icon" style="background:rgba(220,38,38,0.15);color:#f87171;"><i data-lucide="circle-x"></i></div></div><div class="metric-value">${stats.inadimplentes}</div><div class="metric-sub">clientes em atraso</div></div>
+            </div>
+            <div class="table-card" style="margin-top:20px;">
+                <div class="table-header"><div><h3>Resumo por Empresa</h3></div></div>
+                <div style="overflow-x:auto;"><table class="data-table">
+                    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Pendências</th><th>Guias a Vencer</th><th>Status</th></tr></thead>
+                    <tbody>${empresas.map(e => `<tr><td style="font-weight:600;">${e.razaosocial}</td><td class="text-secondary" style="font-family:monospace;">${e.cnpj}</td><td>${e.total_pendencias||0}</td><td>${e.guias_vencer||0}</td><td>${e.inadimplente?'<span class="badge badge-urgente">INADIMPLENTE</span>':'<span class="badge badge-dia">EM DIA</span>'}</td></tr>`).join('')}</tbody>
+                </table></div>
+            </div>`;
+    } catch (e) { document.getElementById('content').innerHTML = '<div style="color:var(--text-muted);">Erro ao carregar relatórios.</div>'; }
+    lucide.createIcons();
+};
+
+// --- PROCURAÇÕES ---
+views.procuracoes = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Procurações e Certificados</h1>
+        <p class="page-subtitle">Gerencie procurações e certificados digitais</p>
+        <div style="background:rgba(220,38,38,0.05);border:1px solid rgba(220,38,38,0.15);border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#f87171;">
+            ⚠️ <strong>Atenção LGPD:</strong> Nunca armazene senhas de certificados digitais dos clientes. Apenas registre metadados (tipo, validade, status).
+        </div>
+        <div class="table-card">
+            <div class="table-header"><div><h3>Procurações</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalProc()">+ Nova Procuração</button></div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Tipo</th><th>Validade</th><th>Status</th><th>Observação</th></tr></thead>
+                <tbody id="proc-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const procs = await api('/api/procuracoes');
+        const tb = document.getElementById('proc-tbody');
+        if (procs.length === 0) { tb.innerHTML = emptyRow(5, 'Nenhuma procuração registrada.'); return; }
+        tb.innerHTML = procs.map(p => `
+            <tr>
+                <td>${p.razaosocial || '—'}</td>
+                <td><span class="badge badge-purple">${p.tipo || '—'}</span></td>
+                <td class="text-secondary">${p.validade ? new Date(p.validade).toLocaleDateString('pt-BR') : '—'}</td>
+                <td><span class="badge badge-${p.status==='ativo'?'green':'grey'}">${(p.status||'ativo').toUpperCase()}</span></td>
+                <td class="text-secondary">${p.observacao || '—'}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('proc-tbody').innerHTML = emptyRow(5, 'Erro ao carregar.'); }
+};
+
+// --- CONFIGURAÇÕES ---
+views.configuracoes = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Configurações</h1>
+        <p class="page-subtitle">Configurações do sistema e segurança</p>
+        <div class="form-card">
+            <h3 style="font-size:16px;font-weight:700;margin-bottom:16px;">🔐 Segurança e LGPD</h3>
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Controle de acesso por usuário (contador e cliente)</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Permissões diferentes para operador e cliente</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Histórico de atividades (audit log) registrado</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Autenticação com JWT e senhas com bcrypt</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Troca de senha obrigatória no primeiro acesso</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-green">✓</span> <span style="font-size:14px;">Documentos armazenados com segurança no banco</span></div>
+                <div style="display:flex;align-items:center;gap:12px;"><span class="badge badge-orange">⚠</span> <span style="font-size:14px;">Senhas de certificados digitais NUNCA são armazenadas</span></div>
+            </div>
+        </div>
+        <div class="form-card">
+            <h3 style="font-size:16px;font-weight:700;margin-bottom:16px;">📋 Registro de Atividades</h3>
+            <div style="overflow-x:auto;max-height:400px;overflow-y:auto;"><table class="data-table">
+                <thead><tr><th>Ação</th><th>IP</th><th>Data/Hora</th></tr></thead>
+                <tbody id="audit-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const logs = await api('/api/audit');
+        const tb = document.getElementById('audit-tbody');
+        if (logs.length === 0) { tb.innerHTML = emptyRow(3, 'Nenhum registro.'); return; }
+        tb.innerHTML = logs.map(l => `<tr><td>${l.acao}</td><td class="text-secondary">${l.ip}</td><td class="text-secondary">${new Date(l.datacriacao).toLocaleString('pt-BR')}</td></tr>`).join('');
+    } catch (e) { document.getElementById('audit-tbody').innerHTML = emptyRow(3, 'Erro ao carregar.'); }
+};
+
+// ==========================================
+// HELPERS
+// ==========================================
+function emptyRow(cols, msg) { return `<tr><td colspan="${cols}" style="text-align:center;padding:40px;color:var(--text-muted);">${msg}</td></tr>`; }
+
+function abrirModal(id) { document.getElementById(id).classList.add('active'); }
+function fecharModal(id) { document.getElementById(id).classList.remove('active'); }
+
+function abrirModalEmpresa() { gerarSenha(); abrirModal('modal-empresa'); }
+function abrirModalGuia() { preencherSelectEmpresas('guia-empresa'); abrirModal('modal-guia'); }
+function abrirModalPendencia() { preencherSelectEmpresas('pend-empresa'); abrirModal('modal-pendencia'); }
+
+function preencherSelectEmpresas(selectId) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Selecione...</option>' + empresasCache.map(e => `<option value="${e.id}">${e.razaosocial}</option>`).join('');
+}
+
+function gerarSenha() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let s = ''; for (let i = 0; i < 8; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
+    const el = document.getElementById('emp-senha'); if (el) el.value = s;
+}
+
+async function consultarCnpj(val) {
+    const cnpj = val.replace(/\D/g, '');
+    if (cnpj.length !== 14) return;
+    const input = document.getElementById('emp-razao');
+    if (!input) return;
+    input.placeholder = 'Buscando...';
+    try {
+        const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
+        if (r.ok) { const d = await r.json(); input.value = d.razao_social || d.nome_fantasia || ''; }
+        input.placeholder = 'Razão Social';
+    } catch { input.placeholder = 'Razão Social'; }
+}
+
+function showAlert(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg; el.className = `alert show alert-${type}`;
+    setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+async function cadastrarEmpresa(e) {
+    e.preventDefault();
+    try {
+        const r = await api('/api/cadastrar-empresa', { method: 'POST', body: JSON.stringify({
+            cnpj: document.getElementById('emp-cnpj').value,
+            razaoSocial: document.getElementById('emp-razao').value,
+            emailEmpresa: document.getElementById('emp-email').value,
+            senha: document.getElementById('emp-senha').value
+        })});
+        showAlert('alert-empresa', r.mensagem, 'success');
+        setTimeout(() => { fecharModal('modal-empresa'); navigate('empresas'); }, 1200);
+    } catch (err) { showAlert('alert-empresa', err.message, 'error'); }
+}
+
+async function cadastrarGuia(e) {
+    e.preventDefault();
+    const empSel = document.getElementById('guia-empresa');
+    const empresa = empresasCache.find(x => x.id == empSel.value);
+    if (!empresa) return showAlert('alert-guia', 'Selecione uma empresa.', 'error');
+    const fd = new FormData();
+    fd.append('cnpj', empresa.cnpj);
+    fd.append('tipoimposto', document.getElementById('guia-tipo').value);
+    fd.append('competencia', document.getElementById('guia-comp').value);
+    fd.append('valor', document.getElementById('guia-valor').value.replace(/\./g,'').replace(',', '.'));
+    fd.append('vencimento', document.getElementById('guia-venc').value);
+    fd.append('pix', document.getElementById('guia-pix').value);
+    const file = document.getElementById('guia-arquivo').files[0];
+    if (file) fd.append('arquivo', file);
+    try {
+        const r = await api('/api/guias', { method: 'POST', body: fd });
+        showAlert('alert-guia', r.mensagem, 'success');
+        setTimeout(() => { fecharModal('modal-guia'); navigate('guias'); }, 1200);
+    } catch (err) { showAlert('alert-guia', err.message, 'error'); }
+}
+
+async function criarPendencia(e) {
+    e.preventDefault();
+    try {
+        const r = await api('/api/pendencias', { method: 'POST', body: JSON.stringify({
+            empresa_id: document.getElementById('pend-empresa').value || null,
+            descricao: document.getElementById('pend-desc').value,
+            prioridade: document.getElementById('pend-prio').value,
+            prazo: document.getElementById('pend-prazo').value || null
+        })});
+        fecharModal('modal-pendencia');
+        navigate('pendencias');
+    } catch (err) { showAlert('alert-pendencia', err.message, 'error'); }
+}
+
+async function resolverPendencia(id) {
+    try { await api(`/api/pendencias/${id}`, { method: 'PUT', body: JSON.stringify({ status: 'resolvido' }) }); navigate('pendencias'); } catch (e) { alert(e.message); }
+}
+async function deletarPendencia(id) {
+    if (!confirm('Excluir esta pendência?')) return;
+    try { await api(`/api/pendencias/${id}`, { method: 'DELETE' }); navigate('pendencias'); } catch (e) { alert(e.message); }
+}
+async function deletarEmpresa(id, nome) {
+    if (!confirm(`Excluir "${nome}"?`)) return;
+    try { await api(`/api/empresas/${id}`, { method: 'DELETE' }); navigate('empresas'); } catch (e) { alert(e.message); }
+}
+async function toggleInadimplente(id, val) {
+    try { await api(`/api/empresas/${id}/inadimplente`, { method: 'PUT', body: JSON.stringify({ inadimplente: val }) }); navigate('empresas'); } catch (e) { alert(e.message); }
+}
+async function marcarDocRecebido(id) {
+    try { await api(`/api/documentos/${id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'recebido' }) }); navigate('docs-pendentes'); } catch (e) { alert(e.message); }
+}
+function verEmpresa(id) { navigate('guias'); }
+async function alterarFolhaStatus(id, status) { try { await api(`/api/folha-pagamento/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }); navigate('folha'); } catch (e) { alert(e.message); } }
+async function alterarFinStatus(id, status) { try { await api(`/api/financeiro/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }); navigate('financeiro'); } catch (e) { alert(e.message); } }
+async function alterarCalStatus(id, status) { try { await api(`/api/calendario/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }); navigate('calendario'); } catch (e) { alert(e.message); } }
+
+// Modais dinâmicos (NF, Folha, Financeiro, Calendario, Aviso, Procuração)
+function abrirModalNF() {
+    preencherSelectEmpresas('_nf_emp');
+    showDynamicModal('Nova Nota Fiscal', `
+        <form onsubmit="criarNF(event)">
+            <div class="form-group"><label>Empresa</label><select id="_nf_emp" required></select></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Número</label><input type="text" id="_nf_num" placeholder="000"></div>
+                <div class="form-group"><label>Competência</label><input type="text" id="_nf_comp" placeholder="MM/AAAA"></div>
+            </div>
+            <div class="form-group"><label>Valor</label><input type="text" id="_nf_val" placeholder="0,00"></div>
+            <div class="form-group"><label>Arquivo (opcional)</label><input type="file" id="_nf_file" accept="application/pdf"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarNF(e) {
+    e.preventDefault();
+    const emp = empresasCache.find(x => x.id == document.getElementById('_nf_emp').value);
+    const fd = new FormData();
+    fd.append('empresa_id', emp?.id || '');
+    fd.append('numero', document.getElementById('_nf_num').value);
+    fd.append('competencia', document.getElementById('_nf_comp').value);
+    fd.append('valor', document.getElementById('_nf_val').value.replace(/\./g,'').replace(',','.'));
+    const f = document.getElementById('_nf_file').files[0]; if (f) fd.append('arquivo', f);
+    try { await api('/api/notas-fiscais', { method: 'POST', body: fd }); fecharModal('modal-dynamic'); navigate('notas-fiscais'); } catch (e) { alert(e.message); }
+}
+
+function abrirModalFolha() {
+    preencherSelectEmpresas('_folha_emp');
+    showDynamicModal('Nova Folha de Pagamento', `
+        <form onsubmit="criarFolha(event)">
+            <div class="form-group"><label>Empresa</label><select id="_folha_emp" required></select></div>
+            <div class="form-group"><label>Competência</label><input type="text" id="_folha_comp" required placeholder="MM/AAAA"></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Funcionários</label><input type="number" id="_folha_func" value="0"></div>
+                <div class="form-group"><label>Valor Total</label><input type="text" id="_folha_val" placeholder="0,00"></div>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarFolha(e) {
+    e.preventDefault();
+    try { await api('/api/folha-pagamento', { method: 'POST', body: JSON.stringify({
+        empresa_id: document.getElementById('_folha_emp').value || null,
+        competencia: document.getElementById('_folha_comp').value,
+        funcionarios: document.getElementById('_folha_func').value,
+        valor_total: document.getElementById('_folha_val').value.replace(/\./g,'').replace(',','.')
+    })}); fecharModal('modal-dynamic'); navigate('folha'); } catch (e) { alert(e.message); }
+}
+
+function abrirModalFin() {
+    preencherSelectEmpresas('_fin_emp');
+    showDynamicModal('Novo Lançamento Financeiro', `
+        <form onsubmit="criarFin(event)">
+            <div class="form-group"><label>Empresa</label><select id="_fin_emp"></select></div>
+            <div class="form-group"><label>Descrição</label><input type="text" id="_fin_desc" required placeholder="Honorários mensais"></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Competência</label><input type="text" id="_fin_comp" placeholder="MM/AAAA"></div>
+                <div class="form-group"><label>Valor</label><input type="text" id="_fin_val" required placeholder="0,00"></div>
+            </div>
+            <div class="form-group"><label>Vencimento</label><input type="date" id="_fin_venc"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarFin(e) {
+    e.preventDefault();
+    try { await api('/api/financeiro', { method: 'POST', body: JSON.stringify({
+        empresa_id: document.getElementById('_fin_emp').value || null,
+        descricao: document.getElementById('_fin_desc').value,
+        competencia: document.getElementById('_fin_comp').value,
+        valor: document.getElementById('_fin_val').value.replace(/\./g,'').replace(',','.'),
+        vencimento: document.getElementById('_fin_venc').value || null
+    })}); fecharModal('modal-dynamic'); navigate('financeiro'); } catch (e) { alert(e.message); }
+}
+
+function abrirModalCalendario() {
+    preencherSelectEmpresas('_cal_emp');
+    showDynamicModal('Novo Evento do Calendário', `
+        <form onsubmit="criarCal(event)">
+            <div class="form-group"><label>Empresa (opcional)</label><select id="_cal_emp"><option value="">Geral</option></select></div>
+            <div class="form-group"><label>Título</label><input type="text" id="_cal_titulo" required placeholder="Ex: Vencimento DAS"></div>
+            <div class="form-group"><label>Descrição</label><textarea id="_cal_desc" rows="2"></textarea></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Tipo</label><select id="_cal_tipo"><option value="vencimento">Vencimento</option><option value="obrigacao">Obrigação</option><option value="documento">Documento</option></select></div>
+                <div class="form-group"><label>Data</label><input type="date" id="_cal_data" required></div>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarCal(e) {
+    e.preventDefault();
+    try { await api('/api/calendario', { method: 'POST', body: JSON.stringify({
+        empresa_id: document.getElementById('_cal_emp').value || null,
+        titulo: document.getElementById('_cal_titulo').value,
+        descricao: document.getElementById('_cal_desc').value,
+        tipo: document.getElementById('_cal_tipo').value,
+        dataevento: document.getElementById('_cal_data').value
+    })}); fecharModal('modal-dynamic'); navigate('calendario'); } catch (e) { alert(e.message); }
+}
+
+function abrirModalAviso() {
+    preencherSelectEmpresas('_aviso_emp');
+    showDynamicModal('Novo Aviso', `
+        <form onsubmit="criarAviso(event)">
+            <div class="form-group"><label>Empresa (opcional)</label><select id="_aviso_emp"><option value="">Geral</option></select></div>
+            <div class="form-group"><label>Título</label><input type="text" id="_aviso_titulo" required placeholder="Ex: Documentos pendentes"></div>
+            <div class="form-group"><label>Mensagem</label><textarea id="_aviso_msg" rows="3" required></textarea></div>
+            <div class="form-group"><label>Tipo</label><select id="_aviso_tipo"><option value="info">Info</option><option value="urgente">Urgente</option><option value="lembrete">Lembrete</option></select></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Enviar</button></div>
+        </form>`);
+}
+async function criarAviso(e) {
+    e.preventDefault();
+    try { await api('/api/avisos', { method: 'POST', body: JSON.stringify({
+        empresa_id: document.getElementById('_aviso_emp').value || null,
+        titulo: document.getElementById('_aviso_titulo').value,
+        mensagem: document.getElementById('_aviso_msg').value,
+        tipo: document.getElementById('_aviso_tipo').value
+    })}); fecharModal('modal-dynamic'); navigate('avisos'); } catch (e) { alert(e.message); }
+}
+
+function abrirModalProc() {
+    preencherSelectEmpresas('_proc_emp');
+    showDynamicModal('Nova Procuração', `
+        <form onsubmit="criarProc(event)">
+            <div class="form-group"><label>Empresa</label><select id="_proc_emp" required></select></div>
+            <div class="form-group"><label>Tipo</label><select id="_proc_tipo"><option value="ECNPJ">e-CNPJ</option><option value="Procuração RFB">Procuração RFB</option><option value="Procuração PGFN">Procuração PGFN</option><option value="Certificado Digital">Certificado Digital</option></select></div>
+            <div class="form-group"><label>Validade</label><input type="date" id="_proc_val"></div>
+            <div class="form-group"><label>Observação</label><textarea id="_proc_obs" rows="2" placeholder="Nunca armazene senhas de certificados"></textarea></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+        </form>`);
+}
+async function criarProc(e) {
+    e.preventDefault();
+    try { await api('/api/procuracoes', { method: 'POST', body: JSON.stringify({
+        empresa_id: document.getElementById('_proc_emp').value || null,
+        tipo: document.getElementById('_proc_tipo').value,
+        validade: document.getElementById('_proc_val').value || null,
+        observacao: document.getElementById('_proc_obs').value
+    })}); fecharModal('modal-dynamic'); navigate('procuracoes'); } catch (e) { alert(e.message); }
+}
+
+function showDynamicModal(title, body) {
+    let modal = document.getElementById('modal-dynamic');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'modal-dynamic';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h3>${title}</h3><button class="modal-close" onclick="fecharModal('modal-dynamic')">&times;</button></div>${body}</div>`;
+    modal.classList.add('active');
+    lucide.createIcons();
+}
+
+// INIT
+lucide.createIcons();
+navigate('dashboard');
+</script>
+</body>
+</html>
