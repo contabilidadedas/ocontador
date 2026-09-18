@@ -215,6 +215,41 @@
         .kanban-card-info { font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; }
         .kanban-card-actions { display: flex; gap: 6px; margin-top: 10px; }
 
+        /* CRM DASHBOARD PROFISSIONAL */
+        .crm-filtros-bar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+        .crm-filtros-bar select { padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-primary); font-size: 13px; outline: none; cursor: pointer; }
+        .crm-filtros-bar select:focus { border-color: var(--accent-blue); }
+        .crm-charts-row { display: flex; gap: 16px; margin-bottom: 20px; }
+        .crm-chart-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .crm-chart-title { font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
+        .crm-mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .crm-mini-card { background: var(--bg-body); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+        .crm-mini-value { font-size: 22px; font-weight: 800; color: var(--text-primary); }
+        .crm-mini-unit { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+        .crm-mini-label { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+        .crm-task-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--bg-body); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+        .crm-ficha { display: flex; flex-direction: column; gap: 20px; }
+        .crm-ficha-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+        .crm-ficha-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .crm-ficha-section { background: var(--bg-body); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+        .crm-ficha-section h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 12px; }
+        .crm-ficha-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        .crm-ficha-row span { color: var(--text-secondary); }
+        .crm-ficha-row b { color: var(--text-primary); font-weight: 600; text-align: right; }
+        .crm-ficha-stats { display: flex; gap: 16px; }
+        .crm-ficha-stat { display: flex; flex-direction: column; align-items: center; }
+        .crm-ficha-num { font-size: 22px; font-weight: 800; color: var(--accent-blue); }
+        .crm-ficha-stat span { font-size: 11px; color: var(--text-secondary); }
+        .crm-timeline { display: flex; flex-direction: column; gap: 12px; }
+        .crm-timeline-item { display: flex; gap: 12px; align-items: flex-start; font-size: 13px; }
+        .crm-timeline-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent-blue); margin-top: 4px; flex-shrink: 0; }
+        .crm-atividade-item { display: flex; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        @media (max-width: 768px) {
+            .crm-charts-row { flex-direction: column; }
+            .crm-ficha-grid { grid-template-columns: 1fr; }
+            .crm-filtros-bar select { flex: 1; min-width: 140px; }
+        }
+
         /* MOBILE TOGGLE */
         .mobile-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 101; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; padding: 10px; cursor: pointer; color: var(--text-primary); }
         @media (max-width: 768px) {
@@ -1467,5 +1502,7 @@ function showDynamicModal(title, body) {
 lucide.createIcons();
 navigate('dashboard');
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="crm.js"></script>
 </body>
 </html>
