@@ -6,13 +6,13 @@ const cors = require('cors');
 const multer = require('multer');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 app.use(cors());
 
 // Serve os arquivos estáticos da pasta do projeto (HTML, CSS, JS do frontend)
 app.use(express.static(__dirname));
 
-// Configuração do Banco de Dados PostgreSQL (usando a URL da Render)
+// Configuração do Banco de Dados PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL || 'postgresql://coontadoronnline_user:7rpGNrhb0DGachE29ibe9q5mNESBQnh4@dpg-daljnhm5vjqs73fl8ep0-a/coontadoronnline',
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false }
@@ -20,7 +20,21 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura';
 
-// Função para criar as tabelas e colunas automaticamente caso elas não existam no banco
+// ==========================================
+// AUDIT LOG - Registro de atividades (LGPD)
+// ==========================================
+async function registrarAuditoria(usuarioId, usuarioTipo, acao, req) {
+    try {
+        await pool.query(
+            'INSERT INTO audit_log (usuario_id, usuario_tipo, acao, ip, datacriacao) VALUES ($1, $2, $3, $4, NOW())',
+            [usuarioId, usuarioTipo, acao, req.ip || 'unknown']
+        );
+    } catch (e) {
+        console.error('Erro ao registrar auditoria:', e.message);
+    }
+}
+
+// Função para criar as tabelas e colunas automaticamente
 async function criarTabelasAutomaticamente() {
     try {
         await pool.query(`
@@ -56,27 +70,156 @@ async function criarTabelasAutomaticamente() {
                 arquivonome VARCHAR(255),
                 arquivodados BYTEA,
                 arquivotipo VARCHAR(100),
+                status VARCHAR(50) DEFAULT 'pendente',
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS documentos (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER,
+                contador_id INTEGER,
+                tipo VARCHAR(30) DEFAULT 'pendente',
+                categoria VARCHAR(100),
+                descricao VARCHAR(255),
+                arquivonome VARCHAR(255),
+                arquivodados BYTEA,
+                arquivotipo VARCHAR(100),
+                status VARCHAR(50) DEFAULT 'pendente',
+                enviado_por VARCHAR(20) DEFAULT 'contador',
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS pendencias (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER,
+                contador_id INTEGER,
+                descricao VARCHAR(255) NOT NULL,
+                prioridade VARCHAR(20) DEFAULT 'media',
+                status VARCHAR(50) DEFAULT 'pendente',
+                prazo DATE,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS checklist_mensal (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER,
+                item VARCHAR(255) NOT NULL,
+                status VARCHAR(50) DEFAULT 'pendente',
+                competencia VARCHAR(20),
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS avisos (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER,
+                empresa_id INTEGER,
+                titulo VARCHAR(255),
+                mensagem TEXT,
+                tipo VARCHAR(50) DEFAULT 'info',
+                lido BOOLEAN DEFAULT FALSE,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_mensagens (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER,
+                empresa_id INTEGER,
+                remetente VARCHAR(20) NOT NULL,
+                mensagem TEXT NOT NULL,
+                lido BOOLEAN DEFAULT FALSE,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER,
+                usuario_tipo VARCHAR(20),
+                acao VARCHAR(255),
+                ip VARCHAR(50),
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS financeiro (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER,
+                empresa_id INTEGER,
+                descricao VARCHAR(255),
+                valor NUMERIC(12,2),
+                status VARCHAR(50) DEFAULT 'pendente',
+                vencimento DATE,
+                competencia VARCHAR(20),
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS calendario_obrigacoes (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER,
+                empresa_id INTEGER,
+                titulo VARCHAR(255) NOT NULL,
+                descricao TEXT,
+                tipo VARCHAR(50) DEFAULT 'obrigacao',
+                dataevento DATE NOT NULL,
+                status VARCHAR(50) DEFAULT 'pendente',
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS procuracoes (
+                id SERIAL PRIMARY KEY,
+                contador_id INTEGER,
+                empresa_id INTEGER,
+                tipo VARCHAR(100),
+                status VARCHAR(50) DEFAULT 'ativo',
+                validade DATE,
+                observacao TEXT,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS notas_fiscais (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER,
+                contador_id INTEGER,
+                numero VARCHAR(50),
+                competencia VARCHAR(20),
+                valor NUMERIC(12,2),
+                status VARCHAR(50) DEFAULT 'recebida',
+                arquivonome VARCHAR(255),
+                arquivodados BYTEA,
+                arquivotipo VARCHAR(100),
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS folha_pagamento (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER,
+                contador_id INTEGER,
+                competencia VARCHAR(20),
+                funcionarios INTEGER DEFAULT 0,
+                valor_total NUMERIC(12,2) DEFAULT 0,
+                status VARCHAR(50) DEFAULT 'pendente',
                 datacriacao TIMESTAMP DEFAULT NOW()
             );
         `);
 
-        // Garante que a coluna de primeiro acesso existe mesmo em tabelas antigas
+        // Garante colunas em tabelas antigas
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS primeiro_acesso BOOLEAN DEFAULT TRUE;`);
+        await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS inadimplente BOOLEAN DEFAULT FALSE;`);
+        await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pendente';`);
 
-        console.log("✅ Tabelas e colunas verificadas/criadas com sucesso no banco de dados!");
+        console.log("✅ Tabelas e colunas verificadas/criadas com sucesso!");
     } catch (err) {
-        console.error("❌ Erro ao criar tabelas automaticamente:", err.message);
+        console.error("❌ Erro ao criar tabelas:", err.message);
     }
 }
 
-// Configuração do Multer para salvar arquivos PDF direto na memória
-const upload = multer({ storage: multer.memoryStorage() });
+// Configuração do Multer
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-// Middleware de Autenticação do Contador
+// ==========================================
+// MIDDLEWARES DE AUTENTICAÇÃO
+// ==========================================
 function verificarTokenContador(req, res, next) {
     const authHeader = req.headers['authorization'];
     if (!authHeader) return res.status(401).json({ erro: 'Token não fornecido.' });
-
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -87,31 +230,36 @@ function verificarTokenContador(req, res, next) {
     }
 }
 
-// ==========================================
-// 1. ROTAS DE CONTADORES (Autenticação)
-// ==========================================
+function verificarTokenCliente(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) return res.status(401).json({ erro: 'Token não fornecido.' });
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.empresaId = decoded.id;
+        req.empresaCnpj = decoded.cnpj;
+        next();
+    } catch (err) {
+        return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+    }
+}
 
+// ==========================================
+// 1. ROTAS DE CONTADORES
+// ==========================================
 app.post('/api/contador/cadastro', async (req, res) => {
     try {
         let { nomeEscritorio, email, senha } = req.body;
-        if (!nomeEscritorio || !email || !senha) {
-            return res.status(400).json({ erro: 'Preencha todos os campos obrigatórios.' });
-        }
-
+        if (!nomeEscritorio || !email || !senha) return res.status(400).json({ erro: 'Preencha todos os campos.' });
         email = email.trim().toLowerCase();
         const usuarioExiste = await pool.query('SELECT * FROM contadores WHERE LOWER(email) = $1', [email]);
-        if (usuarioExiste.rows.length > 0) {
-            return res.status(400).json({ erro: 'Este e-mail já está cadastrado.' });
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        const senhaHash = await bcrypt.hash(senha, salt);
-
-        await pool.query(
-            'INSERT INTO contadores (nomeescritorio, email, senha, senhahash, datacriacao) VALUES ($1, $2, $3, $4, NOW())',
+        if (usuarioExiste.rows.length > 0) return res.status(400).json({ erro: 'Este e-mail já está cadastrado.' });
+        const senhaHash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
+        const resultado = await pool.query(
+            'INSERT INTO contadores (nomeescritorio, email, senha, senhahash, datacriacao) VALUES ($1, $2, $3, $4, NOW()) RETURNING id',
             [nomeEscritorio, email, senhaHash, senhaHash]
         );
-
+        await registrarAuditoria(resultado.rows[0].id, 'contador', 'Cadastro de escritório', req);
         res.status(201).json({ mensagem: 'Escritório cadastrado com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
@@ -121,69 +269,37 @@ app.post('/api/contador/cadastro', async (req, res) => {
 app.post('/api/contador/login', async (req, res) => {
     try {
         let { email, senha } = req.body;
-        if (!email || !senha) {
-            return res.status(400).json({ erro: 'Preencha o e-mail e a senha.' });
-        }
-
+        if (!email || !senha) return res.status(400).json({ erro: 'Preencha o e-mail e a senha.' });
         email = email.trim().toLowerCase();
         const resultado = await pool.query('SELECT * FROM contadores WHERE LOWER(email) = $1', [email]);
-        if (resultado.rows.length === 0) {
-            return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
-        }
-
+        if (resultado.rows.length === 0) return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
         const contador = resultado.rows[0];
-        const senhaArmazenada = contador.senhahash || contador.senha;
-        const senhaValida = await bcrypt.compare(senha, senhaArmazenada);
-        
-        if (!senhaValida) {
-            return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
-        }
-
+        const senhaValida = await bcrypt.compare(senha, contador.senhahash || contador.senha);
+        if (!senhaValida) return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
         const token = jwt.sign({ id: contador.id, email: contador.email }, JWT_SECRET, { expiresIn: '7d' });
-
-        res.json({
-            mensagem: 'Login realizado com sucesso!',
-            token,
-            nomeEscritorio: contador.nomeescritorio || 'Escritório'
-        });
+        await registrarAuditoria(contador.id, 'contador', 'Login no painel', req);
+        res.json({ mensagem: 'Login realizado!', token, nomeEscritorio: contador.nomeescritorio || 'Escritório', contadorId: contador.id });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
     }
 });
 
 // ==========================================
-// 2. ROTAS DE EMPRESAS (Clientes) E LOGIN DO CLIENTE
+// 2. ROTAS DE EMPRESAS (CLIENTES)
 // ==========================================
-
 app.post('/api/cliente/login', async (req, res) => {
     try {
         let { cnpj, senha } = req.body;
-        if (!cnpj || !senha) {
-            return res.status(400).json({ erro: 'Preencha o CNPJ e a senha.' });
-        }
-
+        if (!cnpj || !senha) return res.status(400).json({ erro: 'Preencha o CNPJ e a senha.' });
         const cnpjLimpo = cnpj.replace(/\D/g, '');
         const resultado = await pool.query('SELECT * FROM empresas WHERE cnpj = $1', [cnpjLimpo]);
-        if (resultado.rows.length === 0) {
-            return res.status(400).json({ erro: 'CNPJ ou senha incorretos.' });
-        }
-
+        if (resultado.rows.length === 0) return res.status(400).json({ erro: 'CNPJ ou senha incorretos.' });
         const empresa = resultado.rows[0];
-        const senhaArmazenada = empresa.senhahash || empresa.senha;
-        const senhaValida = await bcrypt.compare(senha, senhaArmazenada);
-        
-        if (!senhaValida) {
-            return res.status(400).json({ erro: 'CNPJ ou senha incorretos.' });
-        }
-
+        const senhaValida = await bcrypt.compare(senha, empresa.senhahash || empresa.senha);
+        if (!senhaValida) return res.status(400).json({ erro: 'CNPJ ou senha incorretos.' });
         const token = jwt.sign({ id: empresa.id, cnpj: empresa.cnpj }, JWT_SECRET, { expiresIn: '7d' });
-
-        res.json({
-            mensagem: 'Login realizado com sucesso!',
-            token,
-            razaoSocial: empresa.razaosocial,
-            primeiroAcesso: empresa.primeiro_acesso
-        });
+        await registrarAuditoria(empresa.id, 'cliente', 'Login do cliente', req);
+        res.json({ mensagem: 'Login realizado!', token, razaoSocial: empresa.razaosocial, primeiroAcesso: empresa.primeiro_acesso, empresaId: empresa.id });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
     }
@@ -192,20 +308,11 @@ app.post('/api/cliente/login', async (req, res) => {
 app.post('/api/cliente/alterar-senha', async (req, res) => {
     try {
         let { cnpj, novaSenha } = req.body;
-        if (!cnpj || !novaSenha) {
-            return res.status(400).json({ erro: 'CNPJ e nova senha são obrigatórios.' });
-        }
-
+        if (!cnpj || !novaSenha) return res.status(400).json({ erro: 'CNPJ e nova senha são obrigatórios.' });
         const cnpjLimpo = cnpj.replace(/\D/g, '');
-        const salt = await bcrypt.genSalt(10);
-        const senhaHash = await bcrypt.hash(novaSenha, salt);
-
-        await pool.query(
-            'UPDATE empresas SET senhahash = $1, senha = $1, primeiro_acesso = FALSE WHERE cnpj = $2',
-            [senhaHash, cnpjLimpo]
-        );
-
-        res.json({ mensagem: 'Senha alterada com sucesso! Faça login novamente.' });
+        const senhaHash = await bcrypt.hash(novaSenha, await bcrypt.genSalt(10));
+        await pool.query('UPDATE empresas SET senhahash = $1, senha = $1, primeiro_acesso = FALSE WHERE cnpj = $2', [senhaHash, cnpjLimpo]);
+        res.json({ mensagem: 'Senha alterada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao alterar senha: ' + erro.message });
     }
@@ -214,7 +321,12 @@ app.post('/api/cliente/alterar-senha', async (req, res) => {
 app.get('/api/empresas', verificarTokenContador, async (req, res) => {
     try {
         const empresas = await pool.query(
-            'SELECT * FROM empresas WHERE contador_id = $1 OR contadorid = $1 ORDER BY datacriacao DESC',
+            `SELECT e.*, 
+                (SELECT COUNT(*) FROM pendencias p WHERE p.empresa_id = e.id AND p.status = 'pendente') as total_pendencias,
+                (SELECT COUNT(*) FROM guias g WHERE g.cnpj = e.cnpj AND g.vencimento >= CURRENT_DATE AND g.status = 'pendente') as guias_vencer
+             FROM empresas e 
+             WHERE e.contador_id = $1 OR e.contadorid = $1 
+             ORDER BY e.datacriacao DESC`,
             [req.contadorId]
         );
         res.json(empresas.rows);
@@ -226,36 +338,23 @@ app.get('/api/empresas', verificarTokenContador, async (req, res) => {
 app.post('/api/cadastrar-empresa', async (req, res) => {
     try {
         let { cnpj, razaoSocial, emailEmpresa, senha } = req.body;
-        if (!cnpj || !razaoSocial || !senha) {
-            return res.status(400).json({ erro: 'Preencha os campos obrigatórios.' });
-        }
-
+        if (!cnpj || !razaoSocial || !senha) return res.status(400).json({ erro: 'Preencha os campos obrigatórios.' });
         const cnpjLimpo = cnpj.replace(/\D/g, '');
         const empresaExiste = await pool.query('SELECT * FROM empresas WHERE cnpj = $1', [cnpjLimpo]);
-        if (empresaExiste.rows.length > 0) {
-            return res.status(400).json({ erro: 'Este CNPJ já está cadastrado.' });
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        const senhaHash = await bcrypt.hash(senha, salt);
-
+        if (empresaExiste.rows.length > 0) return res.status(400).json({ erro: 'Este CNPJ já está cadastrado.' });
+        const senhaHash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
         let contadorId = null;
         const authHeader = req.headers['authorization'];
         if (authHeader) {
-            try {
-                const token = authHeader.split(' ')[1];
-                const decoded = jwt.verify(token, JWT_SECRET);
-                contadorId = decoded.id;
-            } catch (e) { /* Token opcional */ }
+            try { contadorId = jwt.verify(authHeader.split(' ')[1], JWT_SECRET).id; } catch (e) {}
         }
-
         await pool.query(
             `INSERT INTO empresas (cnpj, razaosocial, emailempresa, senha, senhahash, contador_id, contadorid, primeiro_acesso, datacriacao) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())`,
             [cnpjLimpo, razaoSocial, emailEmpresa || '', senhaHash, senhaHash, contadorId, contadorId]
         );
-
-        res.status(201).json({ mensagem: 'Empresa cadastrada com senha provisória com sucesso!' });
+        if (contadorId) await registrarAuditoria(contadorId, 'contador', `Cadastrou empresa: ${razaoSocial}`, req);
+        res.status(201).json({ mensagem: 'Empresa cadastrada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao cadastrar empresa: ' + erro.message });
     }
@@ -265,39 +364,39 @@ app.delete('/api/empresas/:id', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
         await pool.query('DELETE FROM empresas WHERE id = $1 AND (contador_id = $2 OR contadorid = $2)', [id, req.contadorId]);
-        res.json({ mensagem: 'Empresa excluída com sucesso.' });
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu empresa ID: ${id}`, req);
+        res.json({ mensagem: 'Empresa excluída.' });
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao excluir empresa: ' + erro.message });
+        res.status(500).json({ erro: 'Erro ao excluir: ' + erro.message });
+    }
+});
+
+app.put('/api/empresas/:id/inadimplente', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { inadimplente } = req.body;
+        await pool.query('UPDATE empresas SET inadimplente = $1 WHERE id = $2 AND (contador_id = $3 OR contadorid = $3)', [inadimplente, id, req.contadorId]);
+        res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
     }
 });
 
 // ==========================================
 // 3. ROTAS DE GUIAS E IMPOSTOS
 // ==========================================
-
 app.post('/api/guias', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
     try {
         const { cnpj, tipoimposto, competencia, valor, vencimento, pix } = req.body;
-        
-        let arquivoNome = null;
-        let arquivoDados = null;
-        let arquivoTipo = null;
-
-        if (req.file) {
-            arquivoNome = req.file.originalname;
-            arquivoDados = req.file.buffer;
-            arquivoTipo = req.file.mimetype;
-        }
-
         const cnpjLimpo = cnpj ? cnpj.replace(/\D/g, '') : '';
-
         await pool.query(
-            `INSERT INTO guias (cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivodados, arquivotipo, datacriacao) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-            [cnpjLimpo, tipoimposto, competencia, valor || 0, vencimento || null, pix || '', arquivoNome, arquivoDados, arquivoTipo]
+            `INSERT INTO guias (cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivodados, arquivotipo, status, datacriacao) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pendente', NOW())`,
+            [cnpjLimpo, tipoimposto, competencia, valor || 0, vencimento || null, pix || '',
+             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
         );
-
-        res.status(201).json({ mensagem: 'Guia cadastrada e enviada com sucesso!' });
+        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou guia ${tipoimposto} para CNPJ ${cnpjLimpo}`, req);
+        res.status(201).json({ mensagem: 'Guia cadastrada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao salvar guia: ' + erro.message });
     }
@@ -307,7 +406,7 @@ app.get('/api/guias/:cnpj', async (req, res) => {
     try {
         const cnpjLimpo = req.params.cnpj.replace(/\D/g, '');
         const guias = await pool.query(
-            'SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivotipo, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC',
+            'SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivotipo, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC',
             [cnpjLimpo]
         );
         res.json(guias.rows);
@@ -316,25 +415,613 @@ app.get('/api/guias/:cnpj', async (req, res) => {
     }
 });
 
+app.get('/api/guias', verificarTokenContador, async (req, res) => {
+    try {
+        const guias = await pool.query(
+            `SELECT g.*, e.razaosocial 
+             FROM guias g 
+             JOIN empresas e ON g.cnpj = e.cnpj 
+             WHERE e.contador_id = $1 OR e.contadorid = $1 
+             ORDER BY g.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(guias.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar guias: ' + erro.message });
+    }
+});
+
+app.put('/api/guias/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        await pool.query('UPDATE guias SET status = $1 WHERE id = $2', [status, id]);
+        res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
+    }
+});
+
 app.get('/api/guias/download/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM guias WHERE id = $1', [id]);
-        
-        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) {
-            return res.status(404).json({ erro: 'Arquivo PDF não encontrado.' });
-        }
-
+        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const guia = resultado.rows[0];
         res.setHeader('Content-Type', guia.arquivotipo || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${guia.arquivonome || 'guia.pdf'}"`);
         res.send(guia.arquivodados);
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao realizar download: ' + erro.message });
+        res.status(500).json({ erro: 'Erro ao baixar: ' + erro.message });
     }
 });
 
-// Inicialização do Servidor
+// ==========================================
+// 4. DASHBOARD - Estatísticas
+// ==========================================
+app.get('/api/dashboard/stats', verificarTokenContador, async (req, res) => {
+    try {
+        const cid = req.contadorId;
+        const [clientes, inadimplentes, docsHoje, pendencias, guiasVencer] = await Promise.all([
+            pool.query('SELECT COUNT(*) as total FROM empresas WHERE contador_id = $1 OR contadorid = $1', [cid]),
+            pool.query('SELECT COUNT(*) as total FROM empresas WHERE (contador_id = $1 OR contadorid = $1) AND inadimplente = TRUE', [cid]),
+            pool.query('SELECT COUNT(*) as total FROM documentos WHERE contador_id = $1 AND DATE(datacriacao) = CURRENT_DATE', [cid]),
+            pool.query('SELECT COUNT(*) as total FROM pendencias WHERE contador_id = $1 AND status = \'pendente\'', [cid]),
+            pool.query(`SELECT COUNT(*) as total FROM guias g 
+                        JOIN empresas e ON g.cnpj = e.cnpj 
+                        WHERE (e.contador_id = $1 OR e.contadorid = $1) AND g.vencimento >= CURRENT_DATE AND g.status = 'pendente'`, [cid])
+        ]);
+
+        const [urgente, atencao, emDia] = await Promise.all([
+            pool.query('SELECT COUNT(*) as total FROM pendencias WHERE contador_id = $1 AND prioridade = $2 AND status = $3', [cid, 'urgente', 'pendente']),
+            pool.query('SELECT COUNT(*) as total FROM pendencias WHERE contador_id = $1 AND prioridade = $2 AND status = $3', [cid, 'atencao', 'pendente']),
+            pool.query('SELECT COUNT(*) as total FROM empresas WHERE (contador_id = $1 OR contadorid = $1) AND (inadimplente = FALSE OR inadimplente IS NULL)', [cid])
+        ]);
+
+        res.json({
+            clientes: parseInt(clientes.rows[0].total),
+            inadimplentes: parseInt(inadimplentes.rows[0].total),
+            documentosHoje: parseInt(docsHoje.rows[0].total),
+            pendencias: parseInt(pendencias.rows[0].total),
+            guiasVencer: parseInt(guiasVencer.rows[0].total),
+            status: {
+                urgente: parseInt(urgente.rows[0].total),
+                atencao: parseInt(atencao.rows[0].total),
+                emDia: parseInt(emDia.rows[0].total)
+            }
+        });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar estatísticas: ' + erro.message });
+    }
+});
+
+app.get('/api/dashboard/pendencias-recentes', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT p.*, e.razaosocial 
+             FROM pendencias p 
+             LEFT JOIN empresas e ON p.empresa_id = e.id 
+             WHERE p.contador_id = $1 
+             ORDER BY p.datacriacao DESC LIMIT 10`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 5. DOCUMENTOS
+// ==========================================
+app.get('/api/documentos', verificarTokenContador, async (req, res) => {
+    try {
+        const tipo = req.query.tipo;
+        let query = `SELECT d.*, e.razaosocial FROM documentos d LEFT JOIN empresas e ON d.empresa_id = e.id WHERE d.contador_id = $1`;
+        const params = [req.contadorId];
+        if (tipo) { query += ' AND d.tipo = $2'; params.push(tipo); }
+        query += ' ORDER BY d.datacriacao DESC';
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/documentos', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
+    try {
+        const { empresa_id, tipo, categoria, descricao } = req.body;
+        await pool.query(
+            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contador', NOW())`,
+            [empresa_id || null, req.contadorId, tipo || 'recebido', categoria || '', descricao || '',
+             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null,
+             tipo === 'pendente' ? 'pendente' : 'recebido']
+        );
+        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou documento: ${descricao || categoria}`, req);
+        res.status(201).json({ mensagem: 'Documento salvo!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/documentos/cliente', verificarTokenCliente, upload.single('arquivo'), async (req, res) => {
+    try {
+        const { categoria, descricao } = req.body;
+        const empresa = await pool.query('SELECT contador_id, contadorid FROM empresas WHERE id = $1', [req.empresaId]);
+        const contadorId = empresa.rows[0]?.contador_id || empresa.rows[0]?.contadorid;
+        await pool.query(
+            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
+             VALUES ($1, $2, 'recebido', $3, $4, $5, $6, $7, 'recebido', 'cliente', NOW())`,
+            [req.empresaId, contadorId, categoria || '', descricao || '',
+             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
+        );
+        await registrarAuditoria(req.empresaId, 'cliente', `Enviou documento: ${descricao || categoria}`, req);
+        res.status(201).json({ mensagem: 'Documento enviado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.get('/api/documentos/cliente', verificarTokenCliente, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT id, categoria, descricao, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC',
+            [req.empresaId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.get('/api/documentos/download/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM documentos WHERE id = $1', [id]);
+        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        const doc = resultado.rows[0];
+        res.setHeader('Content-Type', doc.arquivotipo || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${doc.arquivonome}"`);
+        res.send(doc.arquivodados);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/documentos/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        await pool.query('UPDATE documentos SET status = $1 WHERE id = $2 AND contador_id = $3', [status, id, req.contadorId]);
+        res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 6. PENDÊNCIAS
+// ==========================================
+app.get('/api/pendencias', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT p.*, e.razaosocial FROM pendencias p LEFT JOIN empresas e ON p.empresa_id = e.id WHERE p.contador_id = $1 ORDER BY 
+             CASE p.prioridade WHEN 'urgente' THEN 1 WHEN 'atencao' THEN 2 ELSE 3 END, p.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/pendencias', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, descricao, prioridade, prazo } = req.body;
+        await pool.query(
+            'INSERT INTO pendencias (empresa_id, contador_id, descricao, prioridade, status, prazo, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+            [empresa_id || null, req.contadorId, descricao, prioridade || 'media', 'pendente', prazo || null]
+        );
+        res.status(201).json({ mensagem: 'Pendência criada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/pendencias/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, prioridade } = req.body;
+        await pool.query('UPDATE pendencias SET status = COALESCE($1, status), prioridade = COALESCE($2, prioridade) WHERE id = $3 AND contador_id = $4',
+            [status, prioridade, id, req.contadorId]);
+        res.json({ mensagem: 'Pendência atualizada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.delete('/api/pendencias/:id', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM pendencias WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Pendência removida.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Pendências do cliente
+app.get('/api/pendencias/cliente', verificarTokenCliente, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT p.*, e.razaosocial FROM pendencias p LEFT JOIN empresas e ON p.empresa_id = e.id WHERE p.empresa_id = $1 ORDER BY p.datacriacao DESC`,
+            [req.empresaId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 7. CHECKLIST MENSAL
+// ==========================================
+app.get('/api/checklist/:empresaId', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [req.params.empresaId]);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/checklist', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, item, status, competencia } = req.body;
+        await pool.query(
+            'INSERT INTO checklist_mensal (empresa_id, item, status, competencia, datacriacao) VALUES ($1, $2, $3, $4, NOW())',
+            [empresa_id, item, status || 'pendente', competencia || '']
+        );
+        res.status(201).json({ mensagem: 'Item adicionado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/checklist/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { status } = req.body;
+        await pool.query('UPDATE checklist_mensal SET status = $1 WHERE id = $2', [status, req.params.id]);
+        res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.get('/api/checklist/cliente/:empresaId', async (req, res) => {
+    try {
+        const resultado = await pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [req.params.empresaId]);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 8. AVISOS / NOTIFICAÇÕES
+// ==========================================
+app.get('/api/avisos', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT a.*, e.razaosocial FROM avisos a LEFT JOIN empresas e ON a.empresa_id = e.id WHERE a.contador_id = $1 ORDER BY a.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/avisos', verificarTokenContador, async (req, res) => {
+    try {
+        const { titulo, mensagem, tipo, empresa_id } = req.body;
+        await pool.query(
+            'INSERT INTO avisos (contador_id, empresa_id, titulo, mensagem, tipo, lido, datacriacao) VALUES ($1, $2, $3, $4, $5, FALSE, NOW())',
+            [req.contadorId, empresa_id || null, titulo, mensagem, tipo || 'info']
+        );
+        res.status(201).json({ mensagem: 'Aviso criado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/avisos/:id/lido', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('UPDATE avisos SET lido = TRUE WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Aviso marcado como lido.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 9. CHAT
+// ==========================================
+app.get('/api/chat/:empresaId', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT * FROM chat_mensagens WHERE empresa_id = $1 ORDER BY datacriacao ASC', [req.params.empresaId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/chat', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, mensagem } = req.body;
+        await pool.query(
+            'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
+            [req.contadorId, empresa_id, 'contador', mensagem]
+        );
+        res.status(201).json({ mensagem: 'Mensagem enviada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.get('/api/chat/cliente', verificarTokenCliente, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT * FROM chat_mensagens WHERE empresa_id = $1 ORDER BY datacriacao ASC', [req.empresaId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/chat/cliente', verificarTokenCliente, async (req, res) => {
+    try {
+        const { mensagem } = req.body;
+        const empresa = await pool.query('SELECT contador_id, contadorid FROM empresas WHERE id = $1', [req.empresaId]);
+        const contadorId = empresa.rows[0]?.contador_id || empresa.rows[0]?.contadorid;
+        await pool.query(
+            'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
+            [contadorId, req.empresaId, 'cliente', mensagem]
+        );
+        res.status(201).json({ mensagem: 'Mensagem enviada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 10. FINANCEIRO / HONORÁRIOS
+// ==========================================
+app.get('/api/financeiro', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT f.*, e.razaosocial FROM financeiro f LEFT JOIN empresas e ON f.empresa_id = e.id WHERE f.contador_id = $1 ORDER BY f.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/financeiro', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, descricao, valor, vencimento, competencia, status } = req.body;
+        await pool.query(
+            'INSERT INTO financeiro (contador_id, empresa_id, descricao, valor, status, vencimento, competencia, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+            [req.contadorId, empresa_id || null, descricao, valor || 0, status || 'pendente', vencimento || null, competencia || '']
+        );
+        res.status(201).json({ mensagem: 'Lançamento criado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/financeiro/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('UPDATE financeiro SET status = $1 WHERE id = $2 AND contador_id = $3', [req.body.status, req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 11. CALENDÁRIO DE OBRIGAÇÕES
+// ==========================================
+app.get('/api/calendario', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT c.*, e.razaosocial FROM calendario_obrigacoes c LEFT JOIN empresas e ON c.empresa_id = e.id WHERE c.contador_id = $1 ORDER BY c.dataevento ASC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/calendario', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, titulo, descricao, tipo, dataevento, status } = req.body;
+        await pool.query(
+            'INSERT INTO calendario_obrigacoes (contador_id, empresa_id, titulo, descricao, tipo, dataevento, status, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+            [req.contadorId, empresa_id || null, titulo, descricao || '', tipo || 'obrigacao', dataevento, status || 'pendente']
+        );
+        res.status(201).json({ mensagem: 'Evento criado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/calendario/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('UPDATE calendario_obrigacoes SET status = $1 WHERE id = $2 AND contador_id = $3', [req.body.status, req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 12. PROCURAÇÕES E CERTIFICADOS
+// ==========================================
+app.get('/api/procuracoes', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT p.*, e.razaosocial FROM procuracoes p LEFT JOIN empresas e ON p.empresa_id = e.id WHERE p.contador_id = $1 ORDER BY p.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/procuracoes', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, tipo, validade, observacao, status } = req.body;
+        await pool.query(
+            'INSERT INTO procuracoes (contador_id, empresa_id, tipo, status, validade, observacao, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+            [req.contadorId, empresa_id || null, tipo || '', status || 'ativo', validade || null, observacao || '']
+        );
+        res.status(201).json({ mensagem: 'Procuração registrada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 13. NOTAS FISCAIS
+// ==========================================
+app.get('/api/notas-fiscais', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT n.*, e.razaosocial FROM notas_fiscais n LEFT JOIN empresas e ON n.empresa_id = e.id WHERE n.contador_id = $1 ORDER BY n.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/notas-fiscais', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
+    try {
+        const { empresa_id, numero, competencia, valor, status } = req.body;
+        await pool.query(
+            `INSERT INTO notas_fiscais (empresa_id, contador_id, numero, competencia, valor, status, arquivonome, arquivodados, arquivotipo, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+            [empresa_id || null, req.contadorId, numero || '', competencia || '', valor || 0, status || 'recebida',
+             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
+        );
+        res.status(201).json({ mensagem: 'Nota fiscal registrada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 14. FOLHA DE PAGAMENTO
+// ==========================================
+app.get('/api/folha-pagamento', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT f.*, e.razaosocial FROM folha_pagamento f LEFT JOIN empresas e ON f.empresa_id = e.id WHERE f.contador_id = $1 ORDER BY f.datacriacao DESC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.post('/api/folha-pagamento', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, competencia, funcionarios, valor_total, status } = req.body;
+        await pool.query(
+            'INSERT INTO folha_pagamento (empresa_id, contador_id, competencia, funcionarios, valor_total, status, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+            [empresa_id || null, req.contadorId, competencia || '', funcionarios || 0, valor_total || 0, status || 'pendente']
+        );
+        res.status(201).json({ mensagem: 'Folha registrada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+app.put('/api/folha-pagamento/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        await pool.query('UPDATE folha_pagamento SET status = $1 WHERE id = $2 AND contador_id = $3', [req.body.status, req.params.id, req.contadorId]);
+        res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 15. AUDIT LOG
+// ==========================================
+app.get('/api/audit', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT * FROM audit_log WHERE usuario_id = $1 AND usuario_tipo = $2 ORDER BY datacriacao DESC LIMIT 100',
+            [req.contadorId, 'contador']
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 16. DASHBOARD DO CLIENTE
+// ==========================================
+app.get('/api/cliente/dashboard', verificarTokenCliente, async (req, res) => {
+    try {
+        const eid = req.empresaId;
+        const [pendencias, checklist, guias, avisos, documentos] = await Promise.all([
+            pool.query('SELECT * FROM pendencias WHERE empresa_id = $1 AND status = $2', [eid, 'pendente']),
+            pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [eid]),
+            pool.query('SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC', [req.empresaCnpj]),
+            pool.query('SELECT * FROM avisos WHERE empresa_id = $1 ORDER BY datacriacao DESC LIMIT 5', [eid]),
+            pool.query('SELECT id, categoria, descricao, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC', [eid])
+        ]);
+        res.json({
+            pendencias: pendencias.rows,
+            checklist: checklist.rows,
+            guias: guias.rows,
+            avisos: avisos.rows,
+            documentos: documentos.rows
+        });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 17. CLIENTE - GUIAS (com token)
+// ==========================================
+app.get('/api/cliente/guias', verificarTokenCliente, async (req, res) => {
+    try {
+        const guias = await pool.query(
+            'SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC',
+            [req.empresaCnpj]
+        );
+        res.json(guias.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Inicialização
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Servidor rodando na porta ${PORT}`);

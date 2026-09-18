@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Escritório Contábil - Área do Cliente</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-body: #0c0f16;
+            --bg-sidebar: #12161f;
+            --bg-card: #1a1f2b;
+            --bg-card-hover: #1e2433;
+            --bg-active: #2c3e60;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a5b1;
+            --text-muted: #6b7280;
+            --border: #1e2433;
+            --border-light: #2a3142;
+            --accent-purple: #8b5cf6;
+            --accent-blue: #3b82f6;
+            --badge-green: #16a34a;
+            --badge-red: #dc2626;
+            --badge-orange: #d97706;
+            --sidebar-w: 260px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-body); color: var(--text-primary); min-height: 100vh; }
+        .layout { display: flex; min-height: 100vh; }
+
+        /* SIDEBAR */
+        .sidebar { width: var(--sidebar-w); background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; z-index: 100; }
+        .sidebar-header { padding: 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+        .sidebar-logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6, #6f42c1); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+        .sidebar-title { font-size: 15px; font-weight: 700; }
+        .sidebar-subtitle { font-size: 11px; color: var(--text-secondary); }
+        .nav-section { padding: 16px 0 8px; }
+        .nav-section-title { padding: 0 20px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 8px; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 20px; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent; }
+        .nav-item:hover { background: rgba(255,255,255,0.03); color: var(--text-primary); }
+        .nav-item.active { background: var(--bg-active); color: var(--text-primary); border-left-color: var(--accent-purple); }
+        .nav-item i { width: 18px; height: 18px; }
+        .sidebar-footer { margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--border); }
+        .btn-logout { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; background: transparent; border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-secondary); font-size: 14px; cursor: pointer; transition: all 0.15s; }
+        .btn-logout:hover { background: rgba(220,38,38,0.1); color: #f87171; }
+
+        /* MAIN */
+        .main { flex: 1; margin-left: var(--sidebar-w); }
+        .topbar { background: var(--bg-body); border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .topbar-welcome { font-size: 15px; font-weight: 600; }
+        .topbar-welcome span { color: var(--text-secondary); font-weight: 400; }
+        .content { padding: 28px; }
+
+        /* CARDS */
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .card h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+        .page-title { font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+        .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 28px; }
+
+        /* CHECKLIST */
+        .checklist-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-body); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+        .check-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .check-dot.recebido, .check-dot.disponivel, .check-dot.calculado { background: var(--badge-green); }
+        .check-dot.pendente { background: var(--badge-red); }
+        .check-dot.aguardando { background: var(--badge-orange); }
+        .check-item-name { flex: 1; font-size: 14px; }
+        .check-item-status { font-size: 12px; font-weight: 600; text-transform: uppercase; }
+
+        /* DOC BUTTONS */
+        .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+        .doc-btn { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px; background: var(--bg-body); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: all 0.15s; text-align: center; }
+        .doc-btn:hover { border-color: var(--accent-purple); background: var(--bg-card-hover); }
+        .doc-btn i { width: 24px; height: 24px; color: var(--accent-purple); }
+        .doc-btn span { font-size: 13px; font-weight: 500; }
+
+        /* GUIAS */
+        .guia-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .guia-tab { padding: 8px 16px; background: var(--bg-body); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+        .guia-tab.active { background: var(--accent-purple); color: #fff; border-color: var(--accent-purple); }
+
+        /* TABLE */
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th { padding: 12px 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); text-align: left; border-bottom: 1px solid var(--border); }
+        .data-table td { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid var(--border); }
+        .data-table tr:last-child td { border-bottom: none; }
+        .badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+        .badge-green { background: rgba(22,163,74,0.15); color: #4ade80; }
+        .badge-orange { background: rgba(217,119,6,0.15); color: #fbbf24; }
+        .badge-grey { background: rgba(108,117,125,0.15); color: #adb5bd; }
+        .badge-purple { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+
+        /* FORM */
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; background: var(--bg-body); border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent-purple); }
+        .btn-submit { padding: 12px 24px; background: var(--accent-purple); color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .btn-submit:hover { background: #7c3aed; }
+        .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+        .btn-sm-purple { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+
+        /* MODAL */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+        .modal-overlay.active { display: flex; }
+        .modal-card { background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 16px; width: 100%; max-width: 480px; padding: 28px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .modal-header h3 { font-size: 20px; font-weight: 700; }
+        .modal-close { background: transparent; border: none; color: var(--text-secondary); font-size: 24px; cursor: pointer; }
+
+        .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .alert.show { display: block; }
+        .alert-success { background: rgba(22,163,74,0.1); color: #4ade80; }
+        .alert-error { background: rgba(220,38,38,0.1); color: #f87171; }
+
+        .mobile-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 101; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 8px; padding: 10px; cursor: pointer; color: var(--text-primary); }
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); transition: transform 0.3s; }
+            .sidebar.open { transform: translateX(0); }
+            .main { margin-left: 0; }
+            .mobile-toggle { display: block; }
+            .content { padding: 16px; }
+        }
+        .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
+        .sidebar-overlay.active { display: block; }
+
+        /* CHAT */
+        .chat-container { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; height: 400px; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+        .chat-msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; font-size: 14px; }
+        .chat-msg.cliente { align-self: flex-end; background: var(--accent-purple); color: #fff; }
+        .chat-msg.contador { align-self: flex-start; background: var(--bg-body); border: 1px solid var(--border-light); }
+        .chat-input { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+        .chat-input input { flex: 1; padding: 10px 14px; background: var(--bg-body); border: 1px solid var(--border-light); border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none; }
+    </style>
+</head>
+<body>
+    <button class="mobile-toggle" onclick="toggleSidebar()"><i data-lucide="menu"></i></button>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+    <div class="layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">🏢</div>
+                <div>
+                    <div class="sidebar-title" id="sidebar-empresa">Empresa</div>
+                    <div class="sidebar-subtitle">Área do Cliente</div>
+                </div>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Principal</div>
+                <a class="nav-item active" data-view="inicio" onclick="navigate('inicio')"><i data-lucide="home"></i> Início</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Documentos</div>
+                <a class="nav-item" data-view="pendencias" onclick="navigate('pendencias')"><i data-lucide="alert-triangle"></i> Pendências</a>
+                <a class="nav-item" data-view="documentos" onclick="navigate('documentos')"><i data-lucide="upload"></i> Enviar Documentos</a>
+                <a class="nav-item" data-view="guias" onclick="navigate('guias')"><i data-lucide="file-text"></i> Minhas Guias</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Comunicação</div>
+                <a class="nav-item" data-view="calendario" onclick="navigate('calendario')"><i data-lucide="calendar"></i> Calendário</a>
+                <a class="nav-item" data-view="chat" onclick="navigate('chat')"><i data-lucide="message-square"></i> Chat com Contador</a>
+            </div>
+            <div class="sidebar-footer">
+                <button class="btn-logout" onclick="logout()"><i data-lucide="log-out" style="width:16px;height:16px;"></i> Sair</button>
+            </div>
+        </aside>
+
+        <div class="main">
+            <header class="topbar">
+                <div class="topbar-welcome">Olá, <span id="topbar-nome">Cliente</span>! 👋</div>
+                <div style="font-size:13px;color:var(--text-secondary);" id="topbar-cnpj"></div>
+            </header>
+            <div class="content" id="content"></div>
+        </div>
+    </div>
+
+    <!-- MODAL TROCA SENHA -->
+    <div class="modal-overlay" id="modal-senha" style="display:none;">
+        <div class="modal-card">
+            <div class="modal-header"><h3>Primeiro Acesso</h3><button class="modal-close" onclick="document.getElementById('modal-senha').style.display='none'">&times;</button></div>
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px;">Por segurança, altere sua senha provisória.</p>
+            <div class="alert" id="alert-senha"></div>
+            <form onsubmit="trocarSenha(event)">
+                <div class="form-group"><label>Nova Senha</label><input type="password" id="nova-senha" required></div>
+                <div class="form-group"><label>Confirmar Senha</label><input type="password" id="confirma-senha" required></div>
+                <button type="submit" class="btn-submit" style="width:100%;">Salvar e Continuar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL UPLOAD -->
+    <div class="modal-overlay" id="modal-upload">
+        <div class="modal-card">
+            <div class="modal-header"><h3 id="upload-title">Enviar Documento</h3><button class="modal-close" onclick="fecharModal('modal-upload')">&times;</button></div>
+            <div class="alert" id="alert-upload"></div>
+            <form onsubmit="enviarDocumento(event)">
+                <input type="hidden" id="upload-categoria">
+                <div class="form-group"><label>Descrição (opcional)</label><input type="text" id="upload-desc" placeholder="Ex: NF 123 - Outubro/2026"></div>
+                <div class="form-group"><label>Arquivo</label><input type="file" id="upload-file" required></div>
+                <button type="submit" class="btn-submit" style="width:100%;">Enviar Documento</button>
+            </form>
+        </div>
+    </div>
+
+<script>
+const token = localStorage.getItem('token');
+const empresa = JSON.parse(localStorage.getItem('empresa') || '{}');
+
+if (!token || !empresa || !empresa.cnpj) {
+    window.location.href = 'cliente.html';
+}
+
+document.getElementById('topbar-nome').textContent = empresa.razaoSocial || 'Cliente';
+document.getElementById('topbar-cnpj').textContent = 'CNPJ: ' + formatarCNPJ(empresa.cnpj);
+document.getElementById('sidebar-empresa').textContent = (empresa.razaoSocial || 'Empresa').substring(0, 22);
+
+if (empresa.primeiroAcesso === true || empresa.primeiroAcesso === 'true') {
+    document.getElementById('modal-senha').style.display = 'flex';
+}
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebarOverlay').classList.toggle('active'); }
+function logout() { localStorage.clear(); window.location.href = 'cliente.html'; }
+function formatarCNPJ(v) { return v ? v.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5") : ''; }
+function fecharModal(id) { document.getElementById(id).classList.remove('active'); document.getElementById(id).style.display = 'none'; }
+
+async function api(url, opts = {}) {
+    const headers = { 'Authorization': `Bearer ${token}`, ...opts.headers };
+    if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const res = await fetch(url, { ...opts, headers });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch { data = { erro: 'Erro no servidor.' }; }
+    if (!res.ok) throw new Error(data.erro || 'Erro');
+    return data;
+}
+
+function navigate(view) {
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`[data-view="${view}"]`)?.classList.add('active');
+    document.getElementById('content').innerHTML = '';
+    if (typeof clientViews[view] === 'function') clientViews[view]();
+    if (window.innerWidth <= 768) { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('active'); }
+    lucide.createIcons();
+}
+
+async function trocarSenha(e) {
+    e.preventDefault();
+    const s1 = document.getElementById('nova-senha').value;
+    const s2 = document.getElementById('confirma-senha').value;
+    const alerta = document.getElementById('alert-senha');
+    if (s1 !== s2) { alerta.textContent = 'As senhas não coincidem.'; alerta.className = 'alert show alert-error'; return; }
+    if (s1.length < 6) { alerta.textContent = 'Mínimo 6 caracteres.'; alerta.className = 'alert show alert-error'; return; }
+    try {
+        await fetch('/api/cliente/alterar-senha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ novaSenha: s1, cnpj: empresa.cnpj }) });
+        empresa.primeiroAcesso = false;
+        localStorage.setItem('empresa', JSON.stringify(empresa));
+        document.getElementById('modal-senha').style.display = 'none';
+        alert('Senha alterada! Faça login novamente.');
+        logout();
+    } catch (e) { alerta.textContent = e.message; alerta.className = 'alert show alert-error'; }
+}
+
+const clientViews = {};
+
+// --- INÍCIO ---
+clientViews.inicio = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Meu Escritório Contábil</h1>
+        <p class="page-subtitle">Veja abaixo o que precisamos de você este mês</p>
+        <div class="card">
+            <h3>📋 Pendências</h3>
+            <div id="inicio-pendencias"></div>
+        </div>
+        <div class="card">
+            <h3>✅ Checklist Mensal</h3>
+            <div id="inicio-checklist"></div>
+        </div>`;
+    try {
+        const data = await api('/api/cliente/dashboard');
+        // Pendências
+        const pendDiv = document.getElementById('inicio-pendencias');
+        if (data.pendencias.length === 0) {
+            pendDiv.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Tudo em dia! Nenhuma pendência. 🎉</div>';
+        } else {
+            pendDiv.innerHTML = data.pendencias.map(p => `
+                <div class="checklist-item">
+                    <div class="check-dot ${p.prioridade === 'urgente' ? 'pendente' : p.prioridade === 'atencao' ? 'aguardando' : 'recebido'}"></div>
+                    <span class="check-item-name">${p.descricao}</span>
+                    <span class="check-item-status" style="color:${p.prioridade==='urgente'?'#f87171':p.prioridade==='atencao'?'#fbbf24':'#4ade80'};">${p.prioridade.toUpperCase()}</span>
+                </div>`).join('');
+        }
+        // Checklist
+        const checkDiv = document.getElementById('inicio-checklist');
+        if (data.checklist.length === 0) {
+            checkDiv.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Nenhum checklist para este mês.</div>';
+        } else {
+            checkDiv.innerHTML = data.checklist.map(c => `
+                <div class="checklist-item">
+                    <div class="check-dot ${c.status}"></div>
+                    <span class="check-item-name">${c.item}</span>
+                    <span class="check-item-status" style="color:${c.status==='recebido'||c.status==='disponivel'||c.status==='calculado'?'#4ade80':c.status==='pendente'?'#f87171':'#fbbf24'};">${c.status.toUpperCase()}</span>
+                </div>`).join('');
+        }
+    } catch (e) {
+        document.getElementById('inicio-pendencias').innerHTML = '<div style="color:var(--text-muted);">Erro ao carregar.</div>';
+    }
+};
+
+// --- PENDÊNCIAS ---
+clientViews.pendencias = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Pendências</h1>
+        <p class="page-subtitle">Documentos e informações que precisamos de você</p>
+        <div class="card"><h3>📋 Suas Pendências</h3><div id="pend-list"></div></div>`;
+    try {
+        const data = await api('/api/cliente/dashboard');
+        const div = document.getElementById('pend-list');
+        if (data.pendencias.length === 0) {
+            div.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Nenhuma pendência! 🎉</div>';
+        } else {
+            div.innerHTML = data.pendencias.map(p => `
+                <div class="checklist-item">
+                    <div class="check-dot ${p.prioridade === 'urgente' ? 'pendente' : p.prioridade === 'atencao' ? 'aguardando' : 'recebido'}"></div>
+                    <span class="check-item-name">${p.descricao}</span>
+                    <span class="check-item-status" style="color:${p.prioridade==='urgente'?'#f87171':p.prioridade==='atencao'?'#fbbf24':'#4ade80'};">${p.prioridade.toUpperCase()}</span>
+                </div>`).join('');
+        }
+    } catch (e) { document.getElementById('pend-list').innerHTML = '<div style="color:var(--text-muted);">Erro.</div>'; }
+};
+
+// --- DOCUMENTOS ---
+clientViews.documentos = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Enviar Documentos</h1>
+        <p class="page-subtitle">Envie seus documentos para o escritório</p>
+        <div class="card">
+            <h3>📤 Escolha o tipo de documento</h3>
+            <div class="doc-grid">
+                <div class="doc-btn" onclick="abrirUpload('NF','Enviar Nota Fiscal')"><i data-lucide="receipt"></i><span>Enviar NF</span></div>
+                <div class="doc-btn" onclick="abrirUpload('PDF','Enviar PDF')"><i data-lucide="file-text"></i><span>Enviar PDF</span></div>
+                <div class="doc-btn" onclick="abrirUpload('XML','Enviar XML')"><i data-lucide="code"></i><span>Enviar XML</span></div>
+                <div class="doc-btn" onclick="abrirUpload('Comprovante','Enviar Comprovante')"><i data-lucide="receipt"></i><span>Enviar Comprovante</span></div>
+                <div class="doc-btn" onclick="abrirUpload('Extrato','Enviar Extrato Bancário')"><i data-lucide="landmark"></i><span>Enviar Extrato</span></div>
+                <div class="doc-btn" onclick="abrirUpload('Outros','Enviar Outros Documentos')"><i data-lucide="folder"></i><span>Enviar Outros</span></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>📄 Documentos Enviados</h3>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Categoria</th><th>Descrição</th><th>Status</th><th>Data</th></tr></thead>
+                <tbody id="docs-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const data = await api('/api/cliente/dashboard');
+        const tb = document.getElementById('docs-tbody');
+        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento enviado.</td></tr>'; return; }
+        tb.innerHTML = data.documentos.map(d => `
+            <tr>
+                <td><span class="badge badge-purple">${d.categoria || '—'}</span></td>
+                <td>${d.descricao || '—'}</td>
+                <td><span class="badge badge-${d.status==='recebido'?'green':'grey'}">${(d.status||'pendente').toUpperCase()}</span></td>
+                <td style="color:var(--text-secondary);">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
+            </tr>`).join('');
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);">Erro.</td></tr>'; }
+    lucide.createIcons();
+};
+
+window.abrirUpload = function(cat, title) {
+    document.getElementById('upload-categoria').value = cat;
+    document.getElementById('upload-title').textContent = title;
+    document.getElementById('modal-upload').classList.add('active');
+    document.getElementById('modal-upload').style.display = 'flex';
+};
+
+window.enviarDocumento = async function(e) {
+    e.preventDefault();
+    const fd = new FormData();
+    fd.append('categoria', document.getElementById('upload-categoria').value);
+    fd.append('descricao', document.getElementById('upload-desc').value);
+    fd.append('arquivo', document.getElementById('upload-file').files[0]);
+    try {
+        await api('/api/documentos/cliente', { method: 'POST', body: fd });
+        fecharModal('modal-upload');
+        document.getElementById('upload-desc').value = '';
+        document.getElementById('upload-file').value = '';
+        navigate('documentos');
+    } catch (e) { const a = document.getElementById('alert-upload'); a.textContent = e.message; a.className = 'alert show alert-error'; }
+};
+
+// --- GUIAS ---
+clientViews.guias = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Minhas Guias</h1>
+        <p class="page-subtitle">Guias de impostos disponíveis para pagamento</p>
+        <div class="guia-tabs">
+            <div class="guia-tab active" onclick="filtrarGuia('')">Todas</div>
+            <div class="guia-tab" onclick="filtrarGuia('DAS')">DAS</div>
+            <div class="guia-tab" onclick="filtrarGuia('DARF')">DARF</div>
+            <div class="guia-tab" onclick="filtrarGuia('FGTS')">FGTS</div>
+            <div class="guia-tab" onclick="filtrarGuia('INSS')">INSS</div>
+            <div class="guia-tab" onclick="filtrarGuia('GPS')">GPS</div>
+            <div class="guia-tab" onclick="filtrarGuia('ISS')">ISS</div>
+            <div class="guia-tab" onclick="filtrarGuia('Outros')">Outras</div>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="guias-tbody"></tbody>
+            </table></div>
+        </div>`;
+    let allGuias = [];
+    try {
+        allGuias = await api('/api/cliente/guias');
+    } catch (e) { allGuias = []; }
+    window.filtrarGuia = function(tipo) {
+        document.querySelectorAll('.guia-tab').forEach(t => t.classList.remove('active'));
+        event.target.classList.add('active');
+        renderGuias(tipo);
+    };
+    function renderGuias(filtro) {
+        const tb = document.getElementById('guias-tbody');
+        const filtered = filtro ? allGuias.filter(g => g.tipoimposto === filtro) : allGuias;
+        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma guia encontrada.</td></tr>'; return; }
+        tb.innerHTML = filtered.map(g => `
+            <tr>
+                <td style="font-weight:600;">${g.tipoimposto || '—'}</td>
+                <td>${g.competencia || '—'}</td>
+                <td style="color:var(--text-secondary);">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
+                <td style="font-weight:600;">R$ ${Number(g.valor||0).toFixed(2)}</td>
+                <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
+                <td>
+                    ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix}')">PIX</button>` : ''}
+                    ${g.arquivonome ? `<a href="/api/guias/download/${g.id}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">PDF</a>` : ''}
+                </td>
+            </tr>`).join('');
+    }
+    renderGuias('');
+};
+
+window.copiarPix = function(code) {
+    navigator.clipboard.writeText(code).then(() => alert('Código PIX copiado!')).catch(() => alert('Erro ao copiar.'));
+};
+
+// --- CALENDÁRIO ---
+clientViews.calendario = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Calendário</h1>
+        <p class="page-subtitle">Vencimentos, obrigações e documentos a enviar</p>
+        <div class="card"><h3>📅 Próximos Vencimentos</h3><div id="cal-list"></div></div>`;
+    try {
+        const data = await api('/api/cliente/guias');
+        const div = document.getElementById('cal-list');
+        const vencer = data.filter(g => g.vencimento && g.status !== 'pago').sort((a,b) => new Date(a.vencimento) - new Date(b.vencimento));
+        if (vencer.length === 0) {
+            div.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Nenhum vencimento próximo.</div>';
+        } else {
+            div.innerHTML = vencer.map(g => `
+                <div class="checklist-item">
+                    <div class="check-dot aguardando"></div>
+                    <span class="check-item-name">${g.tipoimposto} — ${g.competencia || ''}</span>
+                    <span style="color:var(--text-secondary);font-size:13px;">Venc: ${new Date(g.vencimento).toLocaleDateString('pt-BR')}</span>
+                    <span style="font-weight:600;">R$ ${Number(g.valor||0).toFixed(2)}</span>
+                </div>`).join('');
+        }
+    } catch (e) { document.getElementById('cal-list').innerHTML = '<div style="color:var(--text-muted);">Erro.</div>'; }
+};
+
+// --- CHAT ---
+clientViews.chat = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Chat com Contador</h1>
+        <p class="page-subtitle">Converse diretamente com seu contador</p>
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-msgs"></div>
+            <div class="chat-input">
+                <input type="text" id="chat-field" placeholder="Digite uma mensagem..." onkeydown="if(event.key==='Enter')enviarMsgCliente()">
+                <button class="btn-submit" onclick="enviarMsgCliente()">Enviar</button>
+            </div>
+        </div>`;
+    try {
+        const msgs = await api('/api/chat/cliente');
+        const c = document.getElementById('chat-msgs');
+        if (msgs.length === 0) { c.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">Nenhuma mensagem ainda. Envie a primeira!</div>'; }
+        else { c.innerHTML = msgs.map(m => `<div class="chat-msg ${m.remetente}">${m.mensagem}<div style="font-size:10px;opacity:0.6;margin-top:4px;">${new Date(m.datacriacao).toLocaleString('pt-BR')}</div></div>`).join(''); c.scrollTop = c.scrollHeight; }
+    } catch (e) { document.getElementById('chat-msgs').innerHTML = '<div style="color:var(--text-muted);text-align:center;">Erro.</div>'; }
+
+    window.enviarMsgCliente = async function() {
+        const input = document.getElementById('chat-field');
+        if (!input.value.trim()) return;
+        try {
+            await api('/api/chat/cliente', { method: 'POST', body: JSON.stringify({ mensagem: input.value }) });
+            input.value = '';
+            navigate('chat');
+        } catch (e) { alert('Erro ao enviar.'); }
+    };
+};
+
+lucide.createIcons();
+navigate('inicio');
+</script>
+</body>
+</html>
