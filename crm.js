@@ -1,863 +1,549 @@
 // =============================================================
-// CRM Dashboard Profissional — Módulo de Análise Comercial
-// Evolução do CRM existente. Não altera outras funcionalidades.
+// CRM — Funil de Vendas (recriado do zero)
+// Simples, estável, funcional. Não altera outras áreas.
 // =============================================================
 
 (function () {
     'use strict';
 
-    // ---- Configuração das etapas do funil (inclui PERDIDO) ----
-    const CRM_ETAPAS = [
-        { status: 'novo',       label: 'Novo',       color: '#a78bfa', bg: 'rgba(111,66,193,0.15)' },
-        { status: 'contatado',  label: 'Em Contato', color: '#60a5fa', bg: 'rgba(59,130,246,0.15)' },
-        { status: 'negociando', label: 'Proposta',    color: '#fbbf24', bg: 'rgba(217,119,6,0.15)' },
-        { status: 'ganho',      label: 'Fechado',    color: '#4ade80', bg: 'rgba(22,163,74,0.15)' },
-        { status: 'perdido',    label: 'Perdido',     color: '#f87171', bg: 'rgba(220,38,38,0.15)' }
+    // ---- Etapas do funil ----
+    const ETAPAS = [
+        { status: 'novo',       label: 'Novo',       color: '#a78bfa', glow: 'rgba(167,139,250,0.25)' },
+        { status: 'contatado',  label: 'Em Contato', color: '#60a5fa', glow: 'rgba(96,165,250,0.25)' },
+        { status: 'negociando', label: 'Proposta',   color: '#fbbf24', glow: 'rgba(251,191,36,0.25)' },
+        { status: 'ganho',      label: 'Fechado',   color: '#4ade80', glow: 'rgba(74,222,128,0.25)' },
+        { status: 'perdido',    label: 'Perdido',    color: '#f87171', glow: 'rgba(248,113,113,0.25)' }
     ];
 
-    const ORIGENS = ['Instagram','Facebook','WhatsApp','Google','Site','Indicação','Tráfego pago','Tráfego orgânico','Outros'];
-    const MOTIVOS_PERDA = ['Preço','Escolheu concorrente','Sem interesse','Prazo','Serviço não adequado','Não respondeu','Outro'];
-    const TIPOS_ATIVIDADE = ['Ligação','WhatsApp','E-mail','Reunião','Proposta','Retorno','Tarefa'];
+    const ORIGENS = ['Instagram', 'Facebook', 'WhatsApp', 'Google', 'Site', 'Indicação', 'Outros'];
 
-    let crmCharts = {};
     let crmContatos = [];
-    let crmTarefas = [];
-    let crmFiltros = { responsavel: '', etapa: '', origem: '', servico: '', status: '', periodo: '90' };
+    let crmBusca = '';
+    let kanbanDragId = null;
 
     // ---- Helpers ----
-    function fmtMoeda(v) { return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-    function fmtData(d) { return d ? new Date(d).toLocaleDateString('pt-BR') : '—'; }
-    function fmtDataHora(d) { return d ? new Date(d).toLocaleString('pt-BR') : '—'; }
-    function esc(s) { return String(s ?? '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
-    function avgDays(arr) { if (!arr.length) return 0; return +(arr.reduce((s, v) => s + v, 0) / arr.length).toFixed(1); }
-
-    function filtrarContatos() {
-        return crmContatos.filter(c => {
-            if (crmFiltros.responsavel && c.responsavel !== crmFiltros.responsavel) return false;
-            if (crmFiltros.etapa && c.status !== crmFiltros.etapa) return false;
-            if (crmFiltros.origem && (c.origem || 'nao_informado') !== crmFiltros.origem) return false;
-            if (crmFiltros.servico && c.servico_interesse !== crmFiltros.servico) return false;
-            if (crmFiltros.status && c.tipo !== crmFiltros.status) return false;
-            if (crmFiltros.periodo !== 'all') {
-                const dias = parseInt(crmFiltros.periodo);
-                if (dias && c.datacriacao) {
-                    const diff = (Date.now() - new Date(c.datacriacao).getTime()) / 86400000;
-                    if (diff > dias) return false;
-                }
-            }
-            return true;
-        });
+    function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+    function fmtData(d) {
+        if (!d) return '—';
+        return new Date(d).toLocaleDateString('pt-BR') + ' ' + new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    }
+    function etapaLabel(status) {
+        const e = ETAPAS.find(x => x.status === status);
+        return e ? e.label : status;
     }
 
-    function destruirChart(id) { if (crmCharts[id]) { crmCharts[id].destroy(); delete crmCharts[id]; } }
-
-    // ---- Cálculo de indicadores ----
-    function calcularStats(contatos) {
-        const total = contatos.length;
-        const leads = contatos.filter(c => c.tipo === 'lead').length;
-        const clientes = contatos.filter(c => c.tipo === 'cliente').length;
-        const ganhos = contatos.filter(c => c.status === 'ganho').length;
-        const perdidos = contatos.filter(c => c.status === 'perdido').length;
-        const emAndamento = contatos.filter(c => ['novo', 'contatado', 'negociando'].includes(c.status)).length;
-        const valorTotal = contatos.filter(c => c.status !== 'perdido').reduce((s, c) => s + Number(c.valor_proposta || 0), 0);
-        const valorFechado = contatos.filter(c => c.status === 'ganho').reduce((s, c) => s + Number(c.valor_proposta || 0), 0);
-
-        const etapas = CRM_ETAPAS.map(e => {
-            const count = contatos.filter(c => c.status === e.status).length;
-            return { etapa: e.status, label: e.label, quantidade: count, percentual: total > 0 ? +(count / total * 100).toFixed(1) : 0 };
-        });
-
-        const totalProposta = contatos.filter(c => ['negociando', 'ganho', 'perdido'].includes(c.status)).length;
-        const convLeadCliente = total > 0 ? +(clientes / total * 100).toFixed(1) : 0;
-        const convLeadProposta = total > 0 ? +(totalProposta / total * 100).toFixed(1) : 0;
-        const convPropostaFechado = totalProposta > 0 ? +(ganhos / totalProposta * 100).toFixed(1) : 0;
-        const convGeral = total > 0 ? +(ganhos / total * 100).toFixed(1) : 0;
-
-        const t1 = avgDays(contatos.filter(c => c.datacriacao && c.data_primeiro_contato).map(c => (new Date(c.data_primeiro_contato) - new Date(c.datacriacao)) / 86400000));
-        const t2 = avgDays(contatos.filter(c => c.data_primeiro_contato && c.data_proposta).map(c => (new Date(c.data_proposta) - new Date(c.data_primeiro_contato)) / 86400000));
-        const t3 = avgDays(contatos.filter(c => c.data_proposta && c.data_fechamento).map(c => (new Date(c.data_fechamento) - new Date(c.data_proposta)) / 86400000));
-        const t4 = avgDays(contatos.filter(c => c.datacriacao && c.data_fechamento).map(c => (new Date(c.data_fechamento) - new Date(c.datacriacao)) / 86400000));
-
-        const fontesMap = {};
-        contatos.forEach(c => { const o = c.origem || 'nao_informado'; fontesMap[o] = (fontesMap[o] || 0) + 1; });
-        const fontes = Object.entries(fontesMap).map(([origem, count]) => ({ origem, count }));
-
-        const motivosMap = {};
-        contatos.filter(c => c.status === 'perdido').forEach(c => { const m = c.motivo_perda || 'nao_informado'; motivosMap[m] = (motivosMap[m] || 0) + 1; });
-        const motivos = Object.entries(motivosMap).map(([motivo, count]) => ({ motivo, count }));
-
-        return { total, leads, clientes, ganhos, perdidos, emAndamento, valorTotal, valorFechado,
-                 etapas, conversao: { convLeadCliente, convLeadProposta, convPropostaFechado, convGeral },
-                 tempoMedio: { t1, t2, t3, t4 }, fontes, motivos };
-    }
-
-    // ---- Renderização dos cards ----
-    function renderCards(stats) {
-        const cards = [
-            { label: 'Total de Contatos', value: stats.total, sub: 'cadastros', icon: 'users', color: 'rgba(59,130,246,0.15)', ic: '#60a5fa' },
-            { label: 'Leads', value: stats.leads, sub: 'em prospecção', icon: 'user-plus', color: 'rgba(217,119,6,0.15)', ic: '#fbbf24' },
-            { label: 'Clientes', value: stats.clientes, sub: 'convertidos', icon: 'user-check', color: 'rgba(22,163,74,0.15)', ic: '#4ade80' },
-            { label: 'Negócios Ganhos', value: stats.ganhos, sub: 'fechados', icon: 'trophy', color: 'rgba(22,163,74,0.15)', ic: '#4ade80' },
-            { label: 'Em Andamento', value: stats.emAndamento, sub: 'em negociação', icon: 'loader', color: 'rgba(59,130,246,0.15)', ic: '#60a5fa' },
-            { label: 'Negócios Perdidos', value: stats.perdidos, sub: 'não convertidos', icon: 'x-circle', color: 'rgba(220,38,38,0.15)', ic: '#f87171' }
-        ];
-        document.getElementById('crm-cards').innerHTML = cards.map(c => `
-            <div class="metric-card">
-                <div class="metric-card-top">
-                    <div class="metric-label">${c.label}</div>
-                    <div class="metric-icon" style="background:${c.color};color:${c.ic};"><i data-lucide="${c.icon}"></i></div>
-                </div>
-                <div class="metric-value">${c.value}</div>
-                <div class="metric-sub">${c.sub}</div>
-            </div>`).join('');
-    }
-
-    // ---- Gráfico: Negociações por status ao longo do tempo ----
-    function renderChartSeries(contatos) {
-        const ctx = document.getElementById('crm-chart-series');
-        if (!ctx) return;
-        destruirChart('series');
-
-        const dias = parseInt(crmFiltros.periodo) || 90;
-        const labels = [], ganhos = [], perdidos = [], andamento = [], total = [];
-        const hoje = new Date();
-        for (let i = dias - 1; i >= 0; i--) {
-            const d = new Date(hoje); d.setDate(d.getDate() - i);
-            const dStr = d.toISOString().slice(0, 10);
-            labels.push(d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
-            const doDia = contatos.filter(c => c.datacriacao && c.datacriacao.toISOString().slice(0, 10) === dStr);
-            ganhos.push(doDia.filter(c => c.status === 'ganho').length);
-            perdidos.push(doDia.filter(c => c.status === 'perdido').length);
-            andamento.push(doDia.filter(c => ['novo', 'contatado', 'negociando'].includes(c.status)).length);
-            total.push(doDia.length);
+    // ---- Injeção de CSS ----
+    const css = `
+        <style id="crm-styles">
+        /* CRM — Funil de Vendas */
+        .crm-topo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .crm-card-stat {
+            background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(111,66,193,0.06));
+            border: 1px solid rgba(59,130,246,0.2);
+            border-radius: 16px;
+            padding: 20px 22px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
-        crmCharts.series = new Chart(ctx, {
-            type: 'line',
-            data: { labels, datasets: [
-                { label: 'Ganhas', data: ganhos, borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.08)', tension: 0.3, fill: true },
-                { label: 'Perdidas', data: perdidos, borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.08)', tension: 0.3, fill: true },
-                { label: 'Em andamento', data: andamento, borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,0.08)', tension: 0.3, fill: true },
-                { label: 'Total', data: total, borderColor: '#a78bfa', borderDash: [5, 5], tension: 0.3, fill: false }
-            ]},
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#a0a5b1', font: { size: 11 } } } },
-                scales: { x: { ticks: { color: '#6b7280', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-                          y: { ticks: { color: '#6b7280', font: { size: 10 }, precision: 0 }, grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true } } }
+        .crm-card-stat::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-blue, #3b82f6), transparent);
+            opacity: 0.6;
+        }
+        .crm-card-stat:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(59,130,246,0.15); }
+        .crm-card-stat-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary, #a0a5b1); margin-bottom: 8px; }
+        .crm-card-stat-value { font-size: 32px; font-weight: 800; color: var(--text-primary, #fff); line-height: 1; }
+        .crm-card-stat-icon { position: absolute; top: 16px; right: 18px; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+        .crm-card-stat-icon i { width: 18px; height: 18px; }
+        .crm-card-stat.total .crm-card-stat-icon { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .crm-card-stat.leads .crm-card-stat-icon { background: rgba(167,139,250,0.15); color: #a78bfa; }
+        .crm-card-stat.clientes .crm-card-stat-icon { background: rgba(74,222,128,0.15); color: #4ade80; }
+        .crm-card-stat.fechados .crm-card-stat-icon { background: rgba(34,197,94,0.15); color: #22c55e; }
+        .crm-card-stat.total { border-color: rgba(59,130,246,0.25); }
+        .crm-card-stat.leads { border-color: rgba(167,139,250,0.25); }
+        .crm-card-stat.clientes { border-color: rgba(74,222,128,0.25); }
+        .crm-card-stat.fechados { border-color: rgba(34,197,94,0.25); }
+
+        .crm-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .crm-search {
+            flex: 1; min-width: 200px;
+            display: flex; align-items: center; gap: 10px;
+            background: var(--bg-card, #1a1f2b);
+            border: 1px solid var(--border-light, #2a3142);
+            border-radius: 12px;
+            padding: 10px 16px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .crm-search:focus-within { border-color: var(--accent-blue, #3b82f6); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .crm-search i { width: 18px; height: 18px; color: var(--text-muted, #6b7280); flex-shrink: 0; }
+        .crm-search input {
+            flex: 1; background: transparent; border: none; outline: none;
+            color: var(--text-primary, #fff); font-size: 14px; font-family: inherit;
+        }
+        .crm-search input::placeholder { color: var(--text-muted, #6b7280); }
+        .crm-btn-new {
+            display: flex; align-items: center; gap: 8px;
+            background: linear-gradient(135deg, #3b82f6, #6f42c1);
+            color: #fff; border: none; border-radius: 12px;
+            padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.2s; white-space: nowrap;
+            font-family: inherit;
+        }
+        .crm-btn-new:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,130,246,0.3); }
+        .crm-btn-new i { width: 16px; height: 16px; }
+
+        .crm-kanban { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; min-height: 400px; }
+        .crm-col {
+            flex: 1; min-width: 250px;
+            background: rgba(26,31,43,0.6);
+            border: 1px solid var(--border-light, #2a3142);
+            border-radius: 16px;
+            display: flex; flex-direction: column;
+            transition: border-color 0.2s;
+        }
+        .crm-col-head {
+            padding: 14px 16px;
+            display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 1px solid var(--border-light, #2a3142);
+        }
+        .crm-col-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; }
+        .crm-col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .crm-col-count {
+            font-size: 12px; font-weight: 700;
+            padding: 2px 10px; border-radius: 20px;
+            background: rgba(255,255,255,0.06);
+            color: var(--text-secondary, #a0a5b1);
+        }
+        .crm-col-cards {
+            flex: 1; padding: 10px;
+            display: flex; flex-direction: column; gap: 10px;
+            overflow-y: auto; min-height: 80px;
+            transition: background 0.15s, border-color 0.15s;
+            border-radius: 0 0 16px 16px;
+        }
+        .crm-col-cards.drag-over {
+            background: rgba(59,130,246,0.06);
+            border: 2px dashed rgba(59,130,246,0.3);
+            margin: -2px -2px 0 -2px;
+            padding: 8px 8px 8px 8px;
+        }
+        .crm-col-empty { text-align: center; color: var(--text-muted, #6b7280); font-size: 12px; padding: 24px 8px; }
+
+        .crm-contact-card {
+            background: var(--bg-card, #1a1f2b);
+            border: 1px solid var(--border-light, #2a3142);
+            border-radius: 12px;
+            padding: 14px;
+            cursor: grab;
+            transition: border-color 0.15s, box-shadow 0.2s, transform 0.15s;
+            animation: crmFadeIn 0.25s ease;
+        }
+        .crm-contact-card:hover { border-color: var(--accent-blue, #3b82f6); box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+        .crm-contact-card.dragging { opacity: 0.35; cursor: grabbing; }
+        .crm-contact-name { font-size: 14px; font-weight: 600; color: var(--text-primary, #fff); margin-bottom: 6px; }
+        .crm-contact-info { font-size: 12px; color: var(--text-secondary, #a0a5b1); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+        .crm-contact-info i { width: 13px; height: 13px; opacity: 0.6; flex-shrink: 0; }
+        .crm-contact-actions { display: flex; gap: 6px; margin-top: 10px; }
+        .crm-btn-mini {
+            font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 8px;
+            border: 1px solid transparent; cursor: pointer;
+            transition: all 0.15s; font-family: inherit;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .crm-btn-mini i { width: 12px; height: 12px; }
+        .crm-btn-edit { background: rgba(59,130,246,0.12); color: #60a5fa; border-color: rgba(59,130,246,0.2); }
+        .crm-btn-edit:hover { background: rgba(59,130,246,0.2); }
+        .crm-btn-del { background: rgba(220,38,38,0.1); color: #f87171; border-color: rgba(220,38,38,0.2); }
+        .crm-btn-del:hover { background: rgba(220,38,38,0.2); }
+        .crm-btn-info { background: rgba(111,66,193,0.12); color: #a78bfa; border-color: rgba(111,66,193,0.2); }
+        .crm-btn-info:hover { background: rgba(111,66,193,0.2); }
+
+        .crm-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .crm-form-group { margin-bottom: 14px; }
+        .crm-form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary, #a0a5b1); margin-bottom: 6px; }
+        .crm-form-group input, .crm-form-group select, .crm-form-group textarea {
+            width: 100%; background: var(--bg-body, #0c0f16);
+            border: 1px solid var(--border-light, #2a3142); border-radius: 10px;
+            padding: 10px 12px; color: var(--text-primary, #fff); font-size: 14px;
+            font-family: inherit; outline: none; transition: border-color 0.2s;
+        }
+        .crm-form-group input:focus, .crm-form-group select:focus, .crm-form-group textarea:focus {
+            border-color: var(--accent-blue, #3b82f6);
+        }
+        .crm-form-group textarea { resize: vertical; min-height: 60px; }
+
+        .crm-details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .crm-details-item { background: var(--bg-body, #0c0f16); border: 1px solid var(--border-light, #2a3142); border-radius: 10px; padding: 12px 14px; }
+        .crm-details-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted, #6b7280); margin-bottom: 4px; }
+        .crm-details-value { font-size: 14px; color: var(--text-primary, #fff); font-weight: 500; word-break: break-word; }
+        .crm-details-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .crm-details-full { grid-column: 1 / -1; }
+
+        @keyframes crmFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+        @media (max-width: 768px) {
+            .crm-topo { grid-template-columns: 1fr 1fr; }
+            .crm-form-grid { grid-template-columns: 1fr; }
+            .crm-details-grid { grid-template-columns: 1fr; }
+        }
+        </style>
+    `;
+    if (!document.getElementById('crm-styles')) {
+        document.head.insertAdjacentHTML('beforeend', css);
+    }
+
+    // ---- Filtragem por busca ----
+    function filtrarContatos() {
+        if (!crmBusca) return crmContatos;
+        const q = crmBusca.toLowerCase();
+        return crmContatos.filter(c =>
+            (c.nome || '').toLowerCase().includes(q) ||
+            (c.telefone || '').toLowerCase().includes(q) ||
+            (c.email || '').toLowerCase().includes(q) ||
+            (c.empresa || '').toLowerCase().includes(q)
+        );
+    }
+
+    // ---- Renderização da view ----
+    views.crm = async function () {
+        document.getElementById('content').innerHTML = `
+            <h1 class="page-title">CRM — Funil de Vendas</h1>
+            <p class="page-subtitle">Gerencie seus contatos e acompanhe o avanço</p>
+            <div class="crm-topo" id="crm-topo"></div>
+            <div class="crm-toolbar">
+                <div class="crm-search">
+                    <i data-lucide="search"></i>
+                    <input type="text" id="crm-busca-input" placeholder="Pesquisar contato..." value="${esc(crmBusca)}">
+                </div>
+                <button class="crm-btn-new" onclick="crmNovoContato()"><i data-lucide="plus"></i> Novo Contato</button>
+            </div>
+            <div class="crm-kanban" id="crm-kanban"></div>
+        `;
+
+        const buscaInput = document.getElementById('crm-busca-input');
+        buscaInput.addEventListener('input', function () {
+            crmBusca = this.value;
+            renderKanban();
         });
+
+        try {
+            crmContatos = await api('/api/crm/contatos');
+            renderTopo();
+            renderKanban();
+        } catch (e) {
+            document.getElementById('crm-kanban').innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center;">Erro ao carregar contatos.</div>';
+        }
+        lucide.createIcons();
+    };
+
+    function renderTopo() {
+        const total = crmContatos.length;
+        const leads = crmContatos.filter(c => c.tipo === 'lead').length;
+        const clientes = crmContatos.filter(c => c.tipo === 'cliente').length;
+        const fechados = crmContatos.filter(c => c.status === 'ganho').length;
+        document.getElementById('crm-topo').innerHTML = `
+            <div class="crm-card-stat total">
+                <div class="crm-card-stat-icon"><i data-lucide="users"></i></div>
+                <div class="crm-card-stat-label">Total</div>
+                <div class="crm-card-stat-value">${total}</div>
+            </div>
+            <div class="crm-card-stat leads">
+                <div class="crm-card-stat-icon"><i data-lucide="user-plus"></i></div>
+                <div class="crm-card-stat-label">Leads</div>
+                <div class="crm-card-stat-value">${leads}</div>
+            </div>
+            <div class="crm-card-stat clientes">
+                <div class="crm-card-stat-icon"><i data-lucide="user-check"></i></div>
+                <div class="crm-card-stat-label">Clientes</div>
+                <div class="crm-card-stat-value">${clientes}</div>
+            </div>
+            <div class="crm-card-stat fechados">
+                <div class="crm-card-stat-icon"><i data-lucide="trophy"></i></div>
+                <div class="crm-card-stat-label">Fechados</div>
+                <div class="crm-card-stat-value">${fechados}</div>
+            </div>
+        `;
+        lucide.createIcons();
     }
 
-    // ---- Gráfico: Fontes dos leads (doughnut) ----
-    function renderChartFontes(fontes) {
-        const ctx = document.getElementById('crm-chart-fontes');
-        if (!ctx) return;
-        destruirChart('fontes');
-        const labels = fontes.map(f => f.origem === 'nao_informado' ? 'Não informado' : f.origem);
-        const data = fontes.map(f => f.count);
-        const colors = ['#a78bfa','#60a5fa','#fbbf24','#4ade80','#f87171','#ec4899','#14b8a6','#f97316','#8b5cf6','#6b7280'];
-        crmCharts.fontes = new Chart(ctx, {
-            type: 'doughnut',
-            data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#a0a5b1', font: { size: 11 }, padding: 10 } } } }
-        });
-    }
-
-    // ---- Gráfico: Motivos de perda (barra horizontal) ----
-    function renderChartMotivos(motivos) {
-        const ctx = document.getElementById('crm-chart-motivos');
-        if (!ctx) return;
-        destruirChart('motivos');
-        const labels = motivos.map(m => m.motivo === 'nao_informado' ? 'Não informado' : m.motivo);
-        const data = motivos.map(m => m.count);
-        crmCharts.motivos = new Chart(ctx, {
-            type: 'bar',
-            data: { labels, datasets: [{ data, backgroundColor: '#f87171', borderRadius: 6 }] },
-            options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } },
-                scales: { x: { ticks: { color: '#6b7280', precision: 0 }, grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true },
-                          y: { ticks: { color: '#a0a5b1', font: { size: 11 } }, grid: { display: false } } } }
-        });
-    }
-
-    // ---- Tabela de análise por etapa ----
-    function renderEtapaTable(etapas) {
-        const tb = document.getElementById('crm-etapa-tbody');
-        if (!tb) return;
-        if (!etapas.length) { tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--text-muted);">Sem dados.</td></tr>'; return; }
-        tb.innerHTML = etapas.map(e => `
-            <tr>
-                <td><span class="badge" style="background:${CRM_ETAPAS.find(x=>x.status===e.etapa)?.bg};color:${CRM_ETAPAS.find(x=>x.status===e.etapa)?.color};">${e.label}</span></td>
-                <td style="font-weight:600;">${e.quantidade}</td>
-                <td>${e.percentual}%</td>
-            </tr>`).join('');
-    }
-
-    // ---- Indicadores de conversão e tempo médio ----
-    function renderConversao(conv, tm) {
-        const el = document.getElementById('crm-conversao');
-        if (!el) return;
-        el.innerHTML = `
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#4ade80;">${conv.convLeadCliente}%</div><div class="crm-mini-label">Lead → Cliente</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#60a5fa;">${conv.convLeadProposta}%</div><div class="crm-mini-label">Lead → Proposta</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#fbbf24;">${conv.convPropostaFechado}%</div><div class="crm-mini-label">Proposta → Fechado</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#a78bfa;">${conv.convGeral}%</div><div class="crm-mini-label">Conversão Geral</div></div>`;
-        const elT = document.getElementById('crm-tempo');
-        if (!elT) return;
-        elT.innerHTML = `
-            <div class="crm-mini-card"><div class="crm-mini-value">${tm.t1} <span class="crm-mini-unit">dias</span></div><div class="crm-mini-label">Criação → 1º contato</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value">${tm.t2} <span class="crm-mini-unit">dias</span></div><div class="crm-mini-label">1º contato → Proposta</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value">${tm.t3} <span class="crm-mini-unit">dias</span></div><div class="crm-mini-label">Proposta → Fechamento</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value">${tm.t4} <span class="crm-mini-unit">dias</span></div><div class="crm-mini-label">Tempo total</div></div>`;
-    }
-
-    // ---- Dashboard gerencial (valores) ----
-    function renderGerencial(stats) {
-        const el = document.getElementById('crm-gerencial');
-        if (!el) return;
-        el.innerHTML = `
-            <div class="crm-mini-card"><div class="crm-mini-value">${stats.leads}</div><div class="crm-mini-label">Total de Leads</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value">${stats.clientes}</div><div class="crm-mini-label">Clientes</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value">${stats.emAndamento}</div><div class="crm-mini-label">Neg. em Andamento</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#4ade80;">${stats.ganhos}</div><div class="crm-mini-label">Negócios Ganhos</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="color:#f87171;">${stats.perdidos}</div><div class="crm-mini-label">Negócios Perdidos</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="font-size:18px;">${fmtMoeda(stats.valorTotal)}</div><div class="crm-mini-label">Valor das Oportunidades</div></div>
-            <div class="crm-mini-card"><div class="crm-mini-value" style="font-size:18px;color:#4ade80;">${fmtMoeda(stats.valorFechado)}</div><div class="crm-mini-label">Valor Fechado</div></div>`;
-    }
-
-    // ---- Kanban ----
-    function renderKanban(contatos) {
+    function renderKanban() {
+        const contatos = filtrarContatos();
         const board = document.getElementById('crm-kanban');
-        if (!board) return;
-        board.innerHTML = CRM_ETAPAS.map(etapa => {
+        board.innerHTML = ETAPAS.map(etapa => {
             const cards = contatos.filter(c => c.status === etapa.status);
             return `
-                <div class="kanban-column">
-                    <div class="kanban-column-header">
-                        <span class="kanban-column-title" style="color:${etapa.color};">${etapa.label}</span>
-                        <span class="kanban-column-count" style="background:${etapa.bg};color:${etapa.color};">${cards.length}</span>
+                <div class="crm-col">
+                    <div class="crm-col-head">
+                        <span class="crm-col-title">
+                            <span class="crm-col-dot" style="background:${etapa.color};box-shadow:0 0 8px ${etapa.glow};"></span>
+                            ${etapa.label}
+                        </span>
+                        <span class="crm-col-count">${cards.length}</span>
                     </div>
-                    <div class="kanban-cards" data-status="${etapa.status}" ondragover="crmKanbanDragOver(event)" ondrop="crmKanbanDrop(event,'${etapa.status}')" ondragleave="crmKanbanDragLeave(event)">
-                        ${cards.length === 0 ? '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:20px;">Arraste aqui</div>' : cards.map(c => `
-                        <div class="kanban-card" draggable="true" ondragstart="crmKanbanDragStart(event,${c.id})" ondragend="crmKanbanDragEnd(event)" onclick="abrirFichaCRM(${c.id})">
-                            <div class="kanban-card-name">${esc(c.nome)}</div>
-                            ${c.empresa ? `<div class="kanban-card-info"><i data-lucide="building-2" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.empresa)}</div>` : ''}
-                            ${c.telefone ? `<div class="kanban-card-info"><i data-lucide="phone" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.telefone)}</div>` : ''}
-                            ${c.email ? `<div class="kanban-card-info"><i data-lucide="mail" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.email)}</div>` : ''}
-                            ${c.servico_interesse ? `<div class="kanban-card-info" style="color:#fbbf24;"><i data-lucide="briefcase" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.servico_interesse)}</div>` : ''}
-                            ${Number(c.valor_proposta) > 0 ? `<div class="kanban-card-info" style="color:#4ade80;font-weight:600;"><i data-lucide="dollar-sign" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${fmtMoeda(c.valor_proposta)}</div>` : ''}
-                            ${c.responsavel ? `<div class="kanban-card-info"><i data-lucide="user" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.responsavel)}</div>` : ''}
-                            ${c.proxima_tarefa ? `<div class="kanban-card-info" style="color:#60a5fa;"><i data-lucide="clock" style="width:11px;height:11px;display:inline;vertical-align:middle;"></i> ${esc(c.proxima_tarefa)}</div>` : ''}
-                            <div class="kanban-card-actions" onclick="event.stopPropagation()">
-                                <button class="btn-sm btn-sm-blue" onclick="abrirModalCRMEditar(${c.id})">Editar</button>
-                                <button class="btn-sm btn-sm-red" onclick="deletarCRM(${c.id})">Excluir</button>
-                            </div>
-                        </div>`).join('')}
+                    <div class="crm-col-cards" data-status="${etapa.status}"
+                        ondragover="crmDragOver(event)" ondrop="crmDrop(event,'${etapa.status}')" ondragleave="crmDragLeave(event)">
+                        ${cards.length === 0
+                    ? '<div class="crm-col-empty">Arraste aqui</div>'
+                    : cards.map(c => `
+                            <div class="crm-contact-card" draggable="true"
+                                ondragstart="crmDragStart(event,${c.id})" ondragend="crmDragEnd(event)">
+                                <div class="crm-contact-name">${esc(c.nome)}</div>
+                                ${c.telefone ? `<div class="crm-contact-info"><i data-lucide="phone"></i> ${esc(c.telefone)}</div>` : ''}
+                                ${c.email ? `<div class="crm-contact-info"><i data-lucide="mail"></i> ${esc(c.email)}</div>` : ''}
+                                ${c.empresa ? `<div class="crm-contact-info"><i data-lucide="building-2"></i> ${esc(c.empresa)}</div>` : ''}
+                                <div class="crm-contact-actions">
+                                    <button class="crm-btn-mini crm-btn-edit" onclick="crmEditar(${c.id})"><i data-lucide="pencil"></i> Editar</button>
+                                    <button class="crm-btn-mini crm-btn-del" onclick="crmExcluir(${c.id})"><i data-lucide="trash-2"></i> Excluir</button>
+                                    <button class="crm-btn-mini crm-btn-info" onclick="crmDetalhes(${c.id})"><i data-lucide="info"></i> Detalhes</button>
+                                </div>
+                            </div>`).join('')}
                     </div>
                 </div>`;
         }).join('');
+        lucide.createIcons();
     }
 
-    // ---- Tarefas e follow-up ----
-    function renderTarefas() {
-        const el = document.getElementById('crm-tarefas');
-        if (!el) return;
-        const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-        const atrasadas = crmTarefas.filter(t => t.status === 'pendente' && t.prazo && new Date(t.prazo) < hoje);
-        const hojeList = crmTarefas.filter(t => t.status === 'pendente' && t.prazo && new Date(t.prazo).toDateString() === hoje.toDateString());
-        const proximas = crmTarefas.filter(t => t.status === 'pendente' && t.prazo && new Date(t.prazo) > hoje);
-
-        function renderGroup(lista, titulo, cor) {
-            if (!lista.length) return '';
-            return `<div style="margin-bottom:16px;"><div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:${cor};margin-bottom:8px;">${titulo} (${lista.length})</div>
-                ${lista.map(t => `
-                <div class="crm-task-item">
-                    <div style="flex:1;">
-                        <div style="font-weight:600;font-size:13px;">${esc(t.descricao)}</div>
-                        <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">
-                            ${t.contato_nome ? `👤 ${esc(t.contato_nome)}` : ''} ${t.contato_empresa ? `· 🏢 ${esc(t.contato_empresa)}` : ''}
-                            · 📅 ${fmtData(t.prazo)} · 👤 ${esc(t.responsavel || '—')}
-                        </div>
-                    </div>
-                    <span class="badge badge-${t.prioridade === 'urgente' ? 'urgente' : t.prioridade === 'alta' ? 'atencao' : 'grey'}">${(t.prioridade || 'media').toUpperCase()}</span>
-                    <button class="btn-sm btn-sm-green" onclick="concluirTarefaCRM(${t.id})">✓</button>
-                    <button class="btn-sm btn-sm-red" onclick="deletarTarefaCRM(${t.id})">✕</button>
-                </div>`).join('')}
-            </div>`;
-        }
-        el.innerHTML = renderGroup(atrasadas, '🔴 Atrasadas', '#f87171') + renderGroup(hojeList, '🟡 Tarefas de Hoje', '#fbbf24') + renderGroup(proximas, '🟢 Próximas', '#4ade80') ||
-            '<div style="text-align:center;color:var(--text-muted);padding:24px;">Nenhuma tarefa cadastrada.</div>';
-    }
-
-    // ---- Barra de filtros ----
-    function renderFiltros() {
-        const responsaveis = [...new Set(crmContatos.map(c => c.responsavel).filter(Boolean))];
-        const servicos = [...new Set(crmContatos.map(c => c.servico_interesse).filter(Boolean))];
-        const el = document.getElementById('crm-filtros');
-        if (!el) return;
-        el.innerHTML = `
-            <select id="crm-f-periodo" onchange="crmAplicarFiltros()">
-                <option value="7">Últimos 7 dias</option>
-                <option value="30">Últimos 30 dias</option>
-                <option value="90" selected>Últimos 90 dias</option>
-                <option value="365">Este ano</option>
-                <option value="all">Todo o período</option>
-            </select>
-            <select id="crm-f-responsavel" onchange="crmAplicarFiltros()">
-                <option value="">Todos responsáveis</option>
-                ${responsaveis.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
-            </select>
-            <select id="crm-f-etapa" onchange="crmAplicarFiltros()">
-                <option value="">Todas as etapas</option>
-                ${CRM_ETAPAS.map(e => `<option value="${e.status}">${e.label}</option>`).join('')}
-            </select>
-            <select id="crm-f-origem" onchange="crmAplicarFiltros()">
-                <option value="">Todas as origens</option>
-                ${ORIGENS.map(o => `<option value="${o}">${o}</option>`).join('')}
-                <option value="nao_informado">Não informado</option>
-            </select>
-            <select id="crm-f-servico" onchange="crmAplicarFiltros()">
-                <option value="">Todos os serviços</option>
-                ${servicos.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}
-            </select>
-            <select id="crm-f-status" onchange="crmAplicarFiltros()">
-                <option value="">Todos os status</option>
-                <option value="lead">Lead</option>
-                <option value="prospect">Prospect</option>
-                <option value="cliente">Cliente</option>
-                <option value="inativo">Inativo</option>
-            </select>
-            <button class="btn-sm btn-sm-blue" onclick="limparFiltrosCRM()">Limpar</button>`;
-        // Sincroniza valores atuais
-        document.getElementById('crm-f-periodo').value = crmFiltros.periodo;
-        document.getElementById('crm-f-responsavel').value = crmFiltros.responsavel;
-        document.getElementById('crm-f-etapa').value = crmFiltros.etapa;
-        document.getElementById('crm-f-origem').value = crmFiltros.origem;
-        document.getElementById('crm-f-servico').value = crmFiltros.servico;
-        document.getElementById('crm-f-status').value = crmFiltros.status;
-    }
-
-    // ---- Atualização completa do dashboard ----
-    function atualizarDashboard() {
-        const contatos = filtrarContatos();
-        const stats = calcularStats(contatos);
-        renderCards(stats);
-        renderChartSeries(contatos);
-        renderChartFontes(stats.fontes);
-        renderChartMotivos(stats.motivos);
-        renderEtapaTable(stats.etapas);
-        renderConversao(stats.conversao, stats.tempoMedio);
-        renderGerencial(stats);
-        renderKanban(contatos);
-        renderTarefas();
-        if (window.lucide) lucide.createIcons();
-    }
-
-    // ---- VIEW principal do CRM (sobrescreve a existente) ----
-    views.crm = async function () {
-        document.getElementById('content').innerHTML = `
-            <h1 class="page-title">CRM — Análise Comercial</h1>
-            <p class="page-subtitle">Painel profissional de gestão comercial e relacionamento com clientes</p>
-
-            <!-- Filtros -->
-            <div class="crm-filtros-bar" id="crm-filtros"></div>
-
-            <!-- Botões de ação -->
-            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-                <button class="btn-sm btn-sm-blue" onclick="abrirModalCRM()">+ Novo Contato</button>
-                <button class="btn-sm btn-sm-green" onclick="abrirModalTarefaCRM()">+ Nova Tarefa</button>
-                <button class="btn-sm btn-sm-blue" onclick="exportarCRM('leads')">Exportar Leads</button>
-                <button class="btn-sm btn-sm-blue" onclick="exportarCRM('clientes')">Exportar Clientes</button>
-                <button class="btn-sm btn-sm-blue" onclick="exportarCRM('ganhos')">Exportar Ganhos</button>
-                <button class="btn-sm btn-sm-blue" onclick="exportarCRM('perdidos')">Exportar Perdidos</button>
-                <button class="btn-sm btn-sm-blue" onclick="exportarCRM('all')">Exportar Tudo</button>
-            </div>
-
-            <!-- Cards principais -->
-            <div class="metrics-grid" id="crm-cards"></div>
-
-            <!-- Gráficos -->
-            <div class="crm-charts-row">
-                <div class="crm-chart-card" style="flex:2;">
-                    <div class="crm-chart-title">Negociações por Status ao Longo do Tempo</div>
-                    <div style="height:260px;position:relative;"><canvas id="crm-chart-series"></canvas></div>
-                </div>
-                <div class="crm-chart-card" style="flex:1;">
-                    <div class="crm-chart-title">Fontes dos Leads</div>
-                    <div style="height:260px;position:relative;"><canvas id="crm-chart-fontes"></canvas></div>
-                </div>
-            </div>
-
-            <div class="crm-charts-row">
-                <div class="crm-chart-card" style="flex:1;">
-                    <div class="crm-chart-title">Motivos de Perda</div>
-                    <div style="height:220px;position:relative;"><canvas id="crm-chart-motivos"></canvas></div>
-                </div>
-                <div class="crm-chart-card" style="flex:1;">
-                    <div class="crm-chart-title">Dashboard Gerencial</div>
-                    <div class="crm-mini-grid" id="crm-gerencial"></div>
-                </div>
-            </div>
-
-            <!-- Conversão e tempo médio -->
-            <div class="crm-charts-row">
-                <div class="crm-chart-card" style="flex:1;">
-                    <div class="crm-chart-title">Taxa de Conversão</div>
-                    <div class="crm-mini-grid" id="crm-conversao"></div>
-                </div>
-                <div class="crm-chart-card" style="flex:1;">
-                    <div class="crm-chart-title">Tempo Médio de Conversão</div>
-                    <div class="crm-mini-grid" id="crm-tempo"></div>
-                </div>
-            </div>
-
-            <!-- Análise por etapa -->
-            <div class="table-card" style="margin-bottom:24px;">
-                <div class="table-header"><div><h3>Análise por Etapa</h3></div></div>
-                <div style="overflow-x:auto;"><table class="data-table">
-                    <thead><tr><th>Etapa</th><th>Quantidade</th><th>Percentual</th></tr></thead>
-                    <tbody id="crm-etapa-tbody"></tbody>
-                </table></div>
-            </div>
-
-            <!-- Funil Kanban -->
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                <h3 style="font-size:16px;font-weight:700;">Funil de Vendas — Kanban</h3>
-                <span style="font-size:12px;color:var(--text-secondary);">Clique em um cartão para ver a ficha completa</span>
-            </div>
-            <div class="kanban-board" id="crm-kanban"></div>
-
-            <!-- Tarefas e Follow-up -->
-            <div class="table-card" style="margin-top:24px;">
-                <div class="table-header"><div><h3>Tarefas e Follow-up</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalTarefaCRM()">+ Nova Tarefa</button></div>
-                <div style="padding:20px;" id="crm-tarefas"></div>
-            </div>`;
-
-        try {
-            const [contatos, tarefas] = await Promise.all([
-                api('/api/crm/contatos'),
-                api('/api/crm/tarefas').catch(() => [])
-            ]);
-            crmContatos = contatos;
-            crmTarefas = tarefas;
-            renderFiltros();
-            atualizarDashboard();
-        } catch (e) {
-            document.getElementById('crm-kanban').innerHTML = '<div style="color:var(--text-muted);padding:40px;">Erro ao carregar.</div>';
-        }
-        if (window.lucide) lucide.createIcons();
+    // ---- Drag and Drop ----
+    window.crmDragStart = function (e, id) {
+        kanbanDragId = id;
+        e.target.classList.add('dragging');
     };
-
-    // ---- Drag and drop do Kanban ----
-    let crmKanbanDragId = null;
-    window.crmKanbanDragStart = function (e, id) { crmKanbanDragId = id; e.target.classList.add('dragging'); };
-    window.crmKanbanDragEnd = function (e) { e.target.classList.remove('dragging'); };
-    window.crmKanbanDragOver = function (e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); };
-    window.crmKanbanDragLeave = function (e) { e.currentTarget.classList.remove('drag-over'); };
-    window.crmKanbanDrop = async function (e, status) {
+    window.crmDragEnd = function (e) {
+        e.target.classList.remove('dragging');
+    };
+    window.crmDragOver = function (e) {
+        e.preventDefault();
+        e.currentTarget.classList.add('drag-over');
+    };
+    window.crmDragLeave = function (e) {
+        e.currentTarget.classList.remove('drag-over');
+    };
+    window.crmDrop = async function (e, status) {
         e.preventDefault();
         e.currentTarget.classList.remove('drag-over');
-        if (!crmKanbanDragId) return;
-        const id = crmKanbanDragId;
-        crmKanbanDragId = null;
-        const contato = crmContatos.find(c => c.id == id);
-        if (contato && contato.status === status) return;
-
-        if (status === 'perdido') {
-            abrirModalPerda(id, status);
-            return;
-        }
+        if (!kanbanDragId) return;
+        const id = kanbanDragId;
+        kanbanDragId = null;
         try {
-            await api(`/api/crm/contatos/${id}/etapa`, { method: 'PUT', body: JSON.stringify({ status, responsavel: nomeEscritorio }) });
-            contato.status = status;
-            if (status === 'ganho') contato.data_fechamento = new Date().toISOString();
-            if (status === 'contatado' && !contato.data_primeiro_contato) contato.data_primeiro_contato = new Date().toISOString();
-            if (status === 'negociando' && !contato.data_proposta) contato.data_proposta = new Date().toISOString();
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
+            await api(`/api/crm/contatos/${id}/etapa`, { method: 'PUT', body: JSON.stringify({ status }) });
+            const c = crmContatos.find(x => x.id === id);
+            if (c) c.status = status;
+            renderTopo();
+            renderKanban();
+        } catch (e) {
+            alert(e.message);
+        }
     };
 
-    // ---- Modal de motivo de perda ----
-    window.abrirModalPerda = function (id, status) {
-        showDynamicModal('Motivo da Perda', `
-            <form onsubmit="confirmarPerda(event, ${id})">
-                <div class="form-group"><label>Selecione o motivo da perda *</label>
-                    <select id="_perda_motivo" required>
-                        ${MOTIVOS_PERDA.map(m => `<option value="${m}">${m}</option>`).join('')}
-                    </select>
+    // ---- Novo Contato ----
+    window.crmNovoContato = function () {
+        showDynamicModal('Novo Contato', `
+            <form onsubmit="crmSalvarNovo(event)">
+                <div class="crm-form-group">
+                    <label>Nome *</label>
+                    <input type="text" id="crm-nome" required placeholder="Nome do contato">
+                </div>
+                <div class="crm-form-grid">
+                    <div class="crm-form-group">
+                        <label>Telefone</label>
+                        <input type="text" id="crm-telefone" placeholder="(00) 00000-0000">
+                    </div>
+                    <div class="crm-form-group">
+                        <label>E-mail</label>
+                        <input type="email" id="crm-email" placeholder="email@exemplo.com">
+                    </div>
+                </div>
+                <div class="crm-form-group">
+                    <label>Empresa</label>
+                    <input type="text" id="crm-empresa" placeholder="Empresa do contato">
+                </div>
+                <div class="crm-form-grid">
+                    <div class="crm-form-group">
+                        <label>Origem</label>
+                        <select id="crm-origem">
+                            <option value="">Selecione...</option>
+                            ${ORIGENS.map(o => `<option value="${o}">${o}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="crm-form-group">
+                        <label>Etapa</label>
+                        <select id="crm-etapa">
+                            ${ETAPAS.map(e => `<option value="${e.status}">${e.label}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="crm-form-group">
+                    <label>Observações</label>
+                    <textarea id="crm-obs" rows="3" placeholder="Anotações sobre o contato..."></textarea>
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
                     <button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button>
-                    <button type="submit" class="btn-submit">Confirmar Perda</button>
+                    <button type="submit" class="btn-submit">Salvar</button>
                 </div>
-            </form>`);
-    };
-    window.confirmarPerda = async function (e, id) {
-        e.preventDefault();
-        const motivo = document.getElementById('_perda_motivo').value;
-        try {
-            await api(`/api/crm/contatos/${id}/etapa`, { method: 'PUT', body: JSON.stringify({ status: 'perdido', motivo_perda: motivo, responsavel: nomeEscritorio }) });
-            const c = crmContatos.find(x => x.id == id);
-            if (c) { c.status = 'perdido'; c.motivo_perda = motivo; }
-            fecharModal('modal-dynamic');
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
+            </form>
+        `);
     };
 
-    // ---- Filtros ----
-    window.crmAplicarFiltros = function () {
-        crmFiltros.periodo = document.getElementById('crm-f-periodo').value;
-        crmFiltros.responsavel = document.getElementById('crm-f-responsavel').value;
-        crmFiltros.etapa = document.getElementById('crm-f-etapa').value;
-        crmFiltros.origem = document.getElementById('crm-f-origem').value;
-        crmFiltros.servico = document.getElementById('crm-f-servico').value;
-        crmFiltros.status = document.getElementById('crm-f-status').value;
-        atualizarDashboard();
-    };
-    window.limparFiltrosCRM = function () {
-        crmFiltros = { responsavel: '', etapa: '', origem: '', servico: '', status: '', periodo: '90' };
-        renderFiltros();
-        atualizarDashboard();
-    };
-
-    // ---- Exportação CSV ----
-    window.exportarCRM = function (tipo) {
-        window.open(`/api/crm/export?tipo=${tipo}`, '_blank');
-    };
-
-    // ---- Tarefas ----
-    window.abrirModalTarefaCRM = function () {
-        const contatosOpts = crmContatos.map(c => `<option value="${c.id}">${esc(c.nome)}</option>`).join('');
-        showDynamicModal('Nova Tarefa CRM', `
-            <form onsubmit="criarTarefaCRM(event)">
-                <div class="form-group"><label>Contato (opcional)</label><select id="_tarefa_contato"><option value="">Selecione...</option>${contatosOpts}</select></div>
-                <div class="form-group"><label>Descrição *</label><input type="text" id="_tarefa_desc" required placeholder="Descrição da tarefa"></div>
-                <div class="form-grid">
-                    <div class="form-group"><label>Prazo</label><input type="date" id="_tarefa_prazo"></div>
-                    <div class="form-group"><label>Responsável</label><input type="text" id="_tarefa_resp" placeholder="Responsável"></div>
-                </div>
-                <div class="form-group"><label>Prioridade</label><select id="_tarefa_prio"><option value="urgente">Urgente</option><option value="alta">Alta</option><option value="media" selected>Média</option><option value="baixa">Baixa</option></select></div>
-                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Criar</button></div>
-            </form>`);
-    };
-    window.criarTarefaCRM = async function (e) {
+    window.crmSalvarNovo = async function (e) {
         e.preventDefault();
         try {
-            await api('/api/crm/tarefas', { method: 'POST', body: JSON.stringify({
-                contato_id: document.getElementById('_tarefa_contato').value || null,
-                descricao: document.getElementById('_tarefa_desc').value,
-                prazo: document.getElementById('_tarefa_prazo').value || null,
-                responsavel: document.getElementById('_tarefa_resp').value,
-                prioridade: document.getElementById('_tarefa_prio').value
-            })});
+            await api('/api/crm/contatos', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nome: document.getElementById('crm-nome').value,
+                    telefone: document.getElementById('crm-telefone').value,
+                    email: document.getElementById('crm-email').value,
+                    empresa: document.getElementById('crm-empresa').value,
+                    origem: document.getElementById('crm-origem').value,
+                    status: document.getElementById('crm-etapa').value,
+                    observacao: document.getElementById('crm-obs').value
+                })
+            });
             fecharModal('modal-dynamic');
-            crmTarefas = await api('/api/crm/tarefas');
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
-    };
-    window.concluirTarefaCRM = async function (id) {
-        try { await api(`/api/crm/tarefas/${id}`, { method: 'PUT', body: JSON.stringify({ status: 'concluido' }) }); crmTarefas = await api('/api/crm/tarefas'); atualizarDashboard(); } catch (e) { alert(e.message); }
-    };
-    window.deletarTarefaCRM = async function (id) {
-        if (!confirm('Excluir esta tarefa?')) return;
-        try { await api(`/api/crm/tarefas/${id}`, { method: 'DELETE' }); crmTarefas = await api('/api/crm/tarefas'); atualizarDashboard(); } catch (e) { alert(e.message); }
+            navigate('crm');
+        } catch (e) {
+            alert(e.message);
+        }
     };
 
-    // ---- Ficha completa do lead/cliente ----
-    window.abrirFichaCRM = async function (id) {
-        try {
-            const [contato, atividades, historico] = await Promise.all([
-                api('/api/crm/contatos').then(cs => cs.find(c => c.id == id)),
-                api(`/api/crm/contatos/${id}/atividades`).catch(() => []),
-                api(`/api/crm/contatos/${id}/historico`).catch(() => [])
-            ]);
-            if (!contato) return;
-
-            // Busca dados contábeis se vinculado a empresa
-            let dadosContabeis = '';
-            if (contato.empresa_id) {
-                try {
-                    const [docs, guias, fin, pend] = await Promise.all([
-                        api('/api/documentos').then(d => d.filter(x => x.empresa_id == contato.empresa_id)).catch(() => []),
-                        api('/api/guias').then(g => g.filter(x => x.cnpj).catch(() => [])).catch(() => []),
-                        api('/api/financeiro').then(f => f.filter(x => x.empresa_id == contato.empresa_id)).catch(() => []),
-                        api('/api/pendencias').then(p => p.filter(x => x.empresa_id == contato.empresa_id)).catch(() => [])
-                    ]);
-                    dadosContabeis = `
-                        <div class="crm-ficha-section">
-                            <h4>Contabilidade</h4>
-                            <div class="crm-ficha-stats">
-                                <div class="crm-ficha-stat"><span class="crm-ficha-num">${docs.length}</span><span>Documentos</span></div>
-                                <div class="crm-ficha-stat"><span class="crm-ficha-num">${guias.length}</span><span>Guias</span></div>
-                                <div class="crm-ficha-stat"><span class="crm-ficha-num">${fin.length}</span><span>Financeiro</span></div>
-                                <div class="crm-ficha-stat"><span class="crm-ficha-num">${pend.length}</span><span>Pendências</span></div>
-                            </div>
-                        </div>`;
-                } catch { dadosContabeis = '<div class="crm-ficha-section"><h4>Contabilidade</h4><p style="color:var(--text-muted);">Erro ao carregar dados contábeis.</p></div>'; }
-            }
-
-            const etapaAtual = CRM_ETAPAS.find(e => e.status === contato.status);
-            showDynamicModal(`Ficha: ${esc(contato.nome)}`, `
-                <div class="crm-ficha">
-                    <div class="crm-ficha-header">
-                        <div>
-                            <div style="font-size:18px;font-weight:700;">${esc(contato.nome)}</div>
-                            <div style="font-size:13px;color:var(--text-secondary);">${contato.cargo || ''} ${contato.empresa ? '· ' + esc(contato.empresa) : ''}</div>
-                        </div>
-                        <span class="badge" style="background:${etapaAtual?.bg};color:${etapaAtual?.color};font-size:13px;padding:6px 16px;">${etapaAtual?.label || contato.status}</span>
-                    </div>
-
-                    <div class="crm-ficha-grid">
-                        <div class="crm-ficha-section">
-                            <h4>Dados do Contato</h4>
-                            <div class="crm-ficha-row"><span>Telefone</span><b>${esc(contato.telefone || '—')}</b></div>
-                            <div class="crm-ficha-row"><span>WhatsApp</span><b>${esc(contato.whatsapp || '—')}</b></div>
-                            <div class="crm-ficha-row"><span>E-mail</span><b>${esc(contato.email || '—')}</b></div>
-                        </div>
-                        <div class="crm-ficha-section">
-                            <h4>CRM</h4>
-                            <div class="crm-ficha-row"><span>Origem</span><b>${esc(contato.origem || 'Não informado')}</b></div>
-                            <div class="crm-ficha-row"><span>Responsável</span><b>${esc(contato.responsavel || '—')}</b></div>
-                            <div class="crm-ficha-row"><span>Serviço</span><b>${esc(contato.servico_interesse || '—')}</b></div>
-                            <div class="crm-ficha-row"><span>Valor</span><b style="color:#4ade80;">${fmtMoeda(contato.valor_proposta)}</b></div>
-                            <div class="crm-ficha-row"><span>Próxima tarefa</span><b>${esc(contato.proxima_tarefa || '—')}</b></div>
-                            ${contato.motivo_perda ? `<div class="crm-ficha-row"><span>Motivo perda</span><b style="color:#f87171;">${esc(contato.motivo_perda)}</b></div>` : ''}
-                        </div>
-                    </div>
-
-                    ${dadosContabeis}
-
-                    <div class="crm-ficha-section">
-                        <h4>Histórico de Etapas</h4>
-                        ${historico.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;">Sem movimentações registradas.</p>' :
-                            `<div class="crm-timeline">${historico.map(h => `
-                                <div class="crm-timeline-item">
-                                    <div class="crm-timeline-dot"></div>
-                                    <div><b>${CRM_ETAPAS.find(e=>e.status===h.etapa_anterior)?.label || h.etapa_anterior}</b> → <b style="color:${CRM_ETAPAS.find(e=>e.status===h.etapa_nova)?.color}">${CRM_ETAPAS.find(e=>e.status===h.etapa_nova)?.label || h.etapa_nova}</b>
-                                    <div style="font-size:11px;color:var(--text-muted);">${fmtDataHora(h.data_mudanca)} ${h.responsavel ? '· ' + esc(h.responsavel) : ''}</div></div>
-                                </div>`).join('')}</div>`}
-                    </div>
-
-                    <div class="crm-ficha-section">
-                        <h4>Atividades</h4>
-                        <button class="btn-sm btn-sm-blue" style="margin-bottom:10px;" onclick="abrirModalAtividadeCRM(${contato.id})">+ Registrar Atividade</button>
-                        ${atividades.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;">Nenhuma atividade registrada.</p>' :
-                            atividades.map(a => `
-                                <div class="crm-atividade-item">
-                                    <span class="badge badge-blue">${esc(a.tipo)}</span>
-                                    <div style="flex:1;margin-left:10px;">
-                                        <div style="font-size:13px;">${esc(a.descricao)}</div>
-                                        <div style="font-size:11px;color:var(--text-muted);">${fmtDataHora(a.data)} · ${esc(a.responsavel || '—')} ${a.resultado ? '· Resultado: ' + esc(a.resultado) : ''}</div>
-                                    </div>
-                                </div>`).join('')}
-                    </div>
-
-                    <div class="crm-ficha-section">
-                        <h4>Comunicação</h4>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                            ${contato.whatsapp || contato.telefone ? `<a href="https://wa.me/55${(contato.whatsapp || contato.telefone || '').replace(/\\D/g,'')}" target="_blank" class="btn-sm btn-sm-green"><i data-lucide="message-circle" style="width:14px;height:14px;display:inline;"></i> WhatsApp</a>` : ''}
-                            ${contato.email ? `<a href="mailto:${esc(contato.email)}" class="btn-sm btn-sm-blue"><i data-lucide="mail" style="width:14px;height:14px;display:inline;"></i> E-mail</a>` : ''}
-                            ${contato.empresa_id ? `<button class="btn-sm btn-sm-blue" onclick="navigate('chat');setTimeout(()=>selectChatEmpresa(${contato.empresa_id}),300)"><i data-lucide="message-square" style="width:14px;height:14px;display:inline;"></i> Chat</button>` : ''}
-                        </div>
-                    </div>
-
-                    ${!contato.empresa_id ? `
-                    <div class="crm-ficha-section" style="text-align:center;">
-                        <button class="btn-submit" onclick="abrirModalConverterCRM(${contato.id})">Converter em Cliente</button>
-                    </div>` : `
-                    <div class="crm-ficha-section" style="text-align:center;">
-                        <span class="badge badge-green" style="font-size:13px;padding:8px 20px;">✓ Convertido em Cliente</span>
-                    </div>`}
-                </div>`);
-            if (window.lucide) lucide.createIcons();
-        } catch (e) { alert(e.message); }
-    };
-
-    // ---- Modal de atividade ----
-    window.abrirModalAtividadeCRM = function (contatoId) {
-        showDynamicModal('Registrar Atividade', `
-            <form onsubmit="criarAtividadeCRM(event, ${contatoId})">
-                <div class="form-group"><label>Tipo</label><select id="_ativ_tipo">${TIPOS_ATIVIDADE.map(t => `<option value="${t.toLowerCase()}">${t}</option>`).join('')}</select></div>
-                <div class="form-group"><label>Descrição *</label><textarea id="_ativ_desc" rows="2" required placeholder="Descrição da atividade..."></textarea></div>
-                <div class="form-grid">
-                    <div class="form-group"><label>Resultado</label><input type="text" id="_ativ_result" placeholder="Resultado obtido"></div>
-                    <div class="form-group"><label>Próxima ação</label><input type="text" id="_ativ_prox" placeholder="Próxima ação"></div>
+    // ---- Editar ----
+    window.crmEditar = async function (id) {
+        const c = crmContatos.find(x => x.id === id);
+        if (!c) return;
+        showDynamicModal('Editar Contato', `
+            <form onsubmit="crmSalvarEdicao(event, ${id})">
+                <div class="crm-form-group">
+                    <label>Nome *</label>
+                    <input type="text" id="crm-nome" required value="${esc(c.nome)}">
                 </div>
-                <div class="form-group"><label>Responsável</label><input type="text" id="_ativ_resp" value="${esc(nomeEscritorio || '')}"></div>
-                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Registrar</button></div>
-            </form>`);
+                <div class="crm-form-grid">
+                    <div class="crm-form-group">
+                        <label>Telefone</label>
+                        <input type="text" id="crm-telefone" value="${esc(c.telefone)}">
+                    </div>
+                    <div class="crm-form-group">
+                        <label>E-mail</label>
+                        <input type="email" id="crm-email" value="${esc(c.email)}">
+                    </div>
+                </div>
+                <div class="crm-form-group">
+                    <label>Empresa</label>
+                    <input type="text" id="crm-empresa" value="${esc(c.empresa)}">
+                </div>
+                <div class="crm-form-grid">
+                    <div class="crm-form-group">
+                        <label>Origem</label>
+                        <select id="crm-origem">
+                            <option value="">Selecione...</option>
+                            ${ORIGENS.map(o => `<option value="${o}" ${c.origem === o ? 'selected' : ''}>${o}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="crm-form-group">
+                        <label>Etapa</label>
+                        <select id="crm-etapa">
+                            ${ETAPAS.map(e => `<option value="${e.status}" ${c.status === e.status ? 'selected' : ''}>${e.label}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="crm-form-group">
+                    <label>Observações</label>
+                    <textarea id="crm-obs" rows="3">${esc(c.observacao)}</textarea>
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button>
+                    <button type="submit" class="btn-submit">Salvar</button>
+                </div>
+            </form>
+        `);
     };
-    window.criarAtividadeCRM = async function (e, contatoId) {
+
+    window.crmSalvarEdicao = async function (e, id) {
         e.preventDefault();
         try {
-            await api(`/api/crm/contatos/${contatoId}/atividades`, { method: 'POST', body: JSON.stringify({
-                tipo: document.getElementById('_ativ_tipo').value,
-                descricao: document.getElementById('_ativ_desc').value,
-                resultado: document.getElementById('_ativ_result').value,
-                proxima_acao: document.getElementById('_ativ_prox').value,
-                responsavel: document.getElementById('_ativ_resp').value
-            })});
+            await api(`/api/crm/contatos/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    nome: document.getElementById('crm-nome').value,
+                    telefone: document.getElementById('crm-telefone').value,
+                    email: document.getElementById('crm-email').value,
+                    empresa: document.getElementById('crm-empresa').value,
+                    origem: document.getElementById('crm-origem').value,
+                    status: document.getElementById('crm-etapa').value,
+                    observacao: document.getElementById('crm-obs').value
+                })
+            });
             fecharModal('modal-dynamic');
-            abrirFichaCRM(contatoId);
-        } catch (e) { alert(e.message); }
+            navigate('crm');
+        } catch (e) {
+            alert(e.message);
+        }
     };
 
-    // ---- Modal de conversão lead → cliente ----
-    window.abrirModalConverterCRM = function (contatoId) {
-        const contato = crmContatos.find(c => c.id == contatoId);
-        showDynamicModal('Converter Lead em Cliente', `
-            <form onsubmit="confirmarConversaoCRM(event, ${contatoId})">
-                <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">O lead será convertido em cliente. Se informar o CNPJ, será criado um cadastro de empresa vinculado (sem duplicar).</p>
-                <div class="form-group"><label>CNPJ (opcional — se informado, cria empresa)</label><input type="text" id="_conv_cnpj" placeholder="00.000.000/0001-00" onblur="consultarCnpj(this.value)"></div>
-                <div class="form-group"><label>Razão Social</label><input type="text" id="_conv_razao" value="${esc(contato?.empresa || '')}" placeholder="Razão Social"></div>
-                <div class="form-group"><label>E-mail da Empresa</label><input type="email" id="_conv_email" value="${esc(contato?.email || '')}" placeholder="empresa@email.com"></div>
-                <div class="form-group"><label>Senha Provisória (se criar empresa)</label><input type="text" id="_conv_senha" placeholder="Deixe vazio para gerar depois"></div>
-                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Converter</button></div>
-            </form>`);
-    };
-    window.confirmarConversaoCRM = async function (e, contatoId) {
-        e.preventDefault();
-        try {
-            const r = await api(`/api/crm/contatos/${contatoId}/converter`, { method: 'POST', body: JSON.stringify({
-                cnpj: document.getElementById('_conv_cnpj').value || null,
-                razao_social: document.getElementById('_conv_razao').value || null,
-                email_empresa: document.getElementById('_conv_email').value || null,
-                senha: document.getElementById('_conv_senha').value || null,
-                responsavel: nomeEscritorio
-            })});
-            fecharModal('modal-dynamic');
-            // Recarrega contatos
-            crmContatos = await api('/api/crm/contatos');
-            await carregarEmpresasCache();
-            atualizarDashboard();
-            alert(r.mensagem);
-        } catch (e) { alert(e.message); }
+    // ---- Detalhes ----
+    window.crmDetalhes = function (id) {
+        const c = crmContatos.find(x => x.id === id);
+        if (!c) return;
+        const etapa = ETAPAS.find(e => e.status === c.status);
+        const etapaColor = etapa ? etapa.color : '#a0a5b1';
+        showDynamicModal('Detalhes do Contato', `
+            <div class="crm-details-grid">
+                <div class="crm-details-item crm-details-full">
+                    <div class="crm-details-label">Nome</div>
+                    <div class="crm-details-value">${esc(c.nome)}</div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">Telefone</div>
+                    <div class="crm-details-value">${esc(c.telefone) || '—'}</div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">E-mail</div>
+                    <div class="crm-details-value">${esc(c.email) || '—'}</div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">Empresa</div>
+                    <div class="crm-details-value">${esc(c.empresa) || '—'}</div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">Origem</div>
+                    <div class="crm-details-value">${esc(c.origem) || '—'}</div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">Etapa</div>
+                    <div class="crm-details-value"><span class="crm-details-badge" style="background:${etapaColor}22;color:${etapaColor};">${etapaLabel(c.status)}</span></div>
+                </div>
+                <div class="crm-details-item">
+                    <div class="crm-details-label">Data de Criação</div>
+                    <div class="crm-details-value">${fmtData(c.datacriacao)}</div>
+                </div>
+                <div class="crm-details-item crm-details-full">
+                    <div class="crm-details-label">Observações</div>
+                    <div class="crm-details-value" style="white-space:pre-wrap;">${esc(c.observacao) || '—'}</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Fechar</button>
+            </div>
+        `);
     };
 
-    // ---- Sobrescrever modal de criar contato com novos campos ----
-    window.abrirModalCRM = function () {
-        showDynamicModal('Novo Contato CRM', `
-            <form onsubmit="criarCRM(event)">
-                <div class="form-group"><label>Nome *</label><input type="text" id="_crm_nome" required placeholder="Nome do contato"></div>
-                <div class="form-grid">
-                    <div class="form-group"><label>E-mail</label><input type="email" id="_crm_email" placeholder="email@exemplo.com"></div>
-                    <div class="form-group"><label>Telefone</label><input type="text" id="_crm_tel" placeholder="(00) 00000-0000"></div>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group"><label>WhatsApp</label><input type="text" id="_crm_wpp" placeholder="(00) 00000-0000"></div>
-                    <div class="form-group"><label>Empresa</label><input type="text" id="_crm_empresa" placeholder="Empresa do contato"></div>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group"><label>Cargo</label><input type="text" id="_crm_cargo" placeholder="Cargo"></div>
-                    <div class="form-group"><label>Origem</label><select id="_crm_origem"><option value="">Selecione...</option>${ORIGENS.map(o => `<option value="${o}">${o}</option>`).join('')}</select></div>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group"><label>Serviço de Interesse</label><input type="text" id="_crm_servico" placeholder="Ex: Contabilidade, Folha, Fiscal"></div>
-                    <div class="form-group"><label>Responsável</label><input type="text" id="_crm_resp" value="${esc(nomeEscritorio || '')}" placeholder="Responsável"></div>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group"><label>Tipo</label><select id="_crm_tipo"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="cliente">Cliente</option><option value="inativo">Inativo</option></select></div>
-                    <div class="form-group"><label>Status</label><select id="_crm_status"><option value="novo">Novo</option><option value="contatado">Contatado</option><option value="negociando">Negociando</option><option value="ganho">Ganho</option><option value="perdido">Perdido</option></select></div>
-                </div>
-                <div class="form-group"><label>Valor da Proposta (R$)</label><input type="text" id="_crm_valor" placeholder="0,00"></div>
-                <div class="form-group"><label>Próxima Tarefa</label><input type="text" id="_crm_prox" placeholder="Próxima ação/tarefa"></div>
-                <div class="form-group"><label>Observação</label><textarea id="_crm_obs" rows="2" placeholder="Anotações sobre o contato..."></textarea></div>
-                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
-            </form>`);
-    };
-    window.criarCRM = async function (e) {
-        e.preventDefault();
-        try {
-            await api('/api/crm/contatos', { method: 'POST', body: JSON.stringify({
-                nome: document.getElementById('_crm_nome').value,
-                email: document.getElementById('_crm_email').value,
-                telefone: document.getElementById('_crm_tel').value,
-                whatsapp: document.getElementById('_crm_wpp').value,
-                empresa: document.getElementById('_crm_empresa').value,
-                cargo: document.getElementById('_crm_cargo').value,
-                origem: document.getElementById('_crm_origem').value || null,
-                servico_interesse: document.getElementById('_crm_servico').value || null,
-                responsavel: document.getElementById('_crm_resp').value || null,
-                tipo: document.getElementById('_crm_tipo').value,
-                status: document.getElementById('_crm_status').value,
-                valor_proposta: document.getElementById('_crm_valor').value.replace(/\./g, '').replace(',', '.') || 0,
-                proxima_tarefa: document.getElementById('_crm_prox').value || null,
-                observacao: document.getElementById('_crm_obs').value
-            })});
-            fecharModal('modal-dynamic');
-            crmContatos = await api('/api/crm/contatos');
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
-    };
-
-    // ---- Sobrescrever modal de editar contato com novos campos ----
-    window.abrirModalCRMEditar = async function (id) {
-        try {
-            const c = crmContatos.find(x => x.id == id) || (await api('/api/crm/contatos')).find(x => x.id == id);
-            if (!c) return;
-            showDynamicModal('Editar Contato', `
-                <form onsubmit="editarCRM(event, ${id})">
-                    <div class="form-group"><label>Nome *</label><input type="text" id="_crm_nome" required value="${esc(c.nome)}"></div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>E-mail</label><input type="email" id="_crm_email" value="${esc(c.email)}"></div>
-                        <div class="form-group"><label>Telefone</label><input type="text" id="_crm_tel" value="${esc(c.telefone)}"></div>
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>WhatsApp</label><input type="text" id="_crm_wpp" value="${esc(c.whatsapp || '')}"></div>
-                        <div class="form-group"><label>Empresa</label><input type="text" id="_crm_empresa" value="${esc(c.empresa)}"></div>
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>Cargo</label><input type="text" id="_crm_cargo" value="${esc(c.cargo || '')}"></div>
-                        <div class="form-group"><label>Origem</label><select id="_crm_origem"><option value="">Selecione...</option>${ORIGENS.map(o => `<option value="${o}" ${c.origem === o ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>Serviço de Interesse</label><input type="text" id="_crm_servico" value="${esc(c.servico_interesse || '')}"></div>
-                        <div class="form-group"><label>Responsável</label><input type="text" id="_crm_resp" value="${esc(c.responsavel || '')}"></div>
-                    </div>
-                    <div class="form-grid">
-                        <div class="form-group"><label>Tipo</label><select id="_crm_tipo">${['lead','prospect','cliente','inativo'].map(t => `<option value="${t}" ${c.tipo === t ? 'selected' : ''}>${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('')}</select></div>
-                        <div class="form-group"><label>Status</label><select id="_crm_status">${['novo','contatado','negociando','ganho','perdido'].map(s => `<option value="${s}" ${c.status === s ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}</select></div>
-                    </div>
-                    <div class="form-group"><label>Valor da Proposta (R$)</label><input type="text" id="_crm_valor" value="${c.valor_proposta ? Number(c.valor_proposta).toFixed(2).replace('.', ',') : ''}"></div>
-                    <div class="form-group"><label>Próxima Tarefa</label><input type="text" id="_crm_prox" value="${esc(c.proxima_tarefa || '')}"></div>
-                    ${c.status === 'perdido' ? `<div class="form-group"><label>Motivo da Perda</label><select id="_crm_motivo">${MOTIVOS_PERDA.map(m => `<option value="${m}" ${c.motivo_perda === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>` : ''}
-                    <div class="form-group"><label>Observação</label><textarea id="_crm_obs" rows="2">${esc(c.observacao || '')}</textarea></div>
-                    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
-                </form>`);
-        } catch (e) { alert(e.message); }
-    };
-    window.editarCRM = async function (e, id) {
-        e.preventDefault();
-        const motivoEl = document.getElementById('_crm_motivo');
-        try {
-            await api(`/api/crm/contatos/${id}`, { method: 'PUT', body: JSON.stringify({
-                nome: document.getElementById('_crm_nome').value,
-                email: document.getElementById('_crm_email').value,
-                telefone: document.getElementById('_crm_tel').value,
-                whatsapp: document.getElementById('_crm_wpp').value,
-                empresa: document.getElementById('_crm_empresa').value,
-                cargo: document.getElementById('_crm_cargo').value,
-                origem: document.getElementById('_crm_origem').value || null,
-                servico_interesse: document.getElementById('_crm_servico').value || null,
-                responsavel: document.getElementById('_crm_resp').value || null,
-                tipo: document.getElementById('_crm_tipo').value,
-                status: document.getElementById('_crm_status').value,
-                valor_proposta: document.getElementById('_crm_valor').value.replace(/\./g, '').replace(',', '.') || 0,
-                proxima_tarefa: document.getElementById('_crm_prox').value || null,
-                motivo_perda: motivoEl ? motivoEl.value : undefined,
-                observacao: document.getElementById('_crm_obs').value
-            })});
-            fecharModal('modal-dynamic');
-            crmContatos = await api('/api/crm/contatos');
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
-    };
-
-    // Manter função deletarCRM original funcionando com reload do dashboard
-    window.deletarCRM = async function (id) {
+    // ---- Excluir ----
+    window.crmExcluir = async function (id) {
         if (!confirm('Excluir este contato?')) return;
         try {
             await api(`/api/crm/contatos/${id}`, { method: 'DELETE' });
-            crmContatos = await api('/api/crm/contatos');
-            atualizarDashboard();
-        } catch (e) { alert(e.message); }
+            crmContatos = crmContatos.filter(c => c.id !== id);
+            renderTopo();
+            renderKanban();
+        } catch (e) {
+            alert(e.message);
+        }
     };
 
-    console.log('✅ Módulo CRM Dashboard carregado.');
 })();

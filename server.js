@@ -1088,7 +1088,7 @@ app.delete('/api/notas-fiscais/:id', verificarTokenContador, async (req, res) =>
 });
 
 // ==========================================
-// 14c. CRM - Gestão de Contatos
+// 14c. CRM - Gestão de Contatos (simplificado)
 // ==========================================
 app.get('/api/crm/contatos', verificarTokenContador, async (req, res) => {
     try {
@@ -1103,15 +1103,12 @@ app.get('/api/crm/contatos', verificarTokenContador, async (req, res) => {
 
 app.post('/api/crm/contatos', verificarTokenContador, async (req, res) => {
     try {
-        const { nome, email, telefone, whatsapp, empresa, cargo, tipo, status, observacao,
-                origem, servico_interesse, responsavel, valor_proposta, proxima_tarefa } = req.body;
+        const { nome, email, telefone, empresa, origem, status, observacao } = req.body;
         if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório.' });
         const r = await pool.query(
-            `INSERT INTO crm_contatos (contador_id, nome, email, telefone, whatsapp, empresa, cargo, tipo, status, observacao,
-                origem, servico_interesse, responsavel, valor_proposta, proxima_tarefa, datacriacao)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW()) RETURNING id`,
-            [req.contadorId, nome, email||'', telefone||'', whatsapp||'', empresa||'', cargo||'', tipo||'lead', status||'novo', observacao||'',
-             origem||null, servico_interesse||null, responsavel||null, valor_proposta||0, proxima_tarefa||null]
+            `INSERT INTO crm_contatos (contador_id, nome, email, telefone, empresa, origem, status, observacao, tipo, datacriacao)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'lead',NOW()) RETURNING id`,
+            [req.contadorId, nome, email||'', telefone||'', empresa||'', origem||null, status||'novo', observacao||'']
         );
         res.status(201).json({ mensagem: 'Contato criado!', id: r.rows[0].id });
     } catch (erro) {
@@ -1122,18 +1119,14 @@ app.post('/api/crm/contatos', verificarTokenContador, async (req, res) => {
 app.put('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
-        const { nome, email, telefone, whatsapp, empresa, cargo, tipo, status, observacao,
-                origem, servico_interesse, responsavel, valor_proposta, proxima_tarefa, motivo_perda, empresa_id } = req.body;
+        const { nome, email, telefone, empresa, origem, status, observacao } = req.body;
         await pool.query(
             `UPDATE crm_contatos SET
-                nome=COALESCE($1,nome), email=COALESCE($2,email), telefone=COALESCE($3,telefone), whatsapp=COALESCE($4,whatsapp),
-                empresa=COALESCE($5,empresa), cargo=COALESCE($6,cargo), tipo=COALESCE($7,tipo), status=COALESCE($8,status),
-                observacao=COALESCE($9,observacao), origem=COALESCE($10,origem), servico_interesse=COALESCE($11,servico_interesse),
-                responsavel=COALESCE($12,responsavel), valor_proposta=COALESCE($13,valor_proposta), proxima_tarefa=COALESCE($14,proxima_tarefa),
-                motivo_perda=COALESCE($15,motivo_perda), empresa_id=COALESCE($16,empresa_id)
-             WHERE id=$17 AND contador_id=$18`,
-            [nome, email, telefone, whatsapp, empresa, cargo, tipo, status, observacao,
-             origem, servico_interesse, responsavel, valor_proposta, proxima_tarefa, motivo_perda, empresa_id, id, req.contadorId]
+                nome=COALESCE($1,nome), email=COALESCE($2,email), telefone=COALESCE($3,telefone),
+                empresa=COALESCE($4,empresa), origem=COALESCE($5,origem), status=COALESCE($6,status),
+                observacao=COALESCE($7,observacao)
+             WHERE id=$8 AND contador_id=$9`,
+            [nome, email, telefone, empresa, origem, status, observacao, id, req.contadorId]
         );
         res.json({ mensagem: 'Contato atualizado!' });
     } catch (erro) {
@@ -1141,38 +1134,14 @@ app.put('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => {
     }
 });
 
-// Mover contato de etapa (registra histórico, valida motivo de perda, atualiza datas)
 app.put('/api/crm/contatos/:id/etapa', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, motivo_perda, responsavel } = req.body;
-        const atual = await pool.query('SELECT status, data_primeiro_contato, data_proposta FROM crm_contatos WHERE id=$1 AND contador_id=$2', [id, req.contadorId]);
+        const { status } = req.body;
+        const atual = await pool.query('SELECT status FROM crm_contatos WHERE id=$1 AND contador_id=$2', [id, req.contadorId]);
         if (atual.rows.length === 0) return res.status(404).json({ erro: 'Contato não encontrado.' });
-        const etapaAnterior = atual.rows[0].status;
-        if (etapaAnterior === status) return res.json({ mensagem: 'Sem alteração.' });
-
-        // Se movendo para perdido, exige motivo
-        if (status === 'perdido' && !motivo_perda) {
-            return res.status(400).json({ erro: 'Motivo da perda é obrigatório.' });
-        }
-
-        const updates = ['status=$1'];
-        const params = [status];
-        let pi = 2;
-        if (status === 'perdido' && motivo_perda) { updates.push(`motivo_perda=$${pi}`); params.push(motivo_perda); pi++; }
-        if (status === 'contatado' && !atual.rows[0].data_primeiro_contato) { updates.push(`data_primeiro_contato=NOW()`); }
-        if (status === 'negociando' && !atual.rows[0].data_proposta) { updates.push(`data_proposta=NOW()`); }
-        if (status === 'ganho') { updates.push(`data_fechamento=NOW()`); }
-        updates.push(`data_ultimo_contato=NOW()`);
-        params.push(id, req.contadorId);
-        await pool.query(`UPDATE crm_contatos SET ${updates.join(',')} WHERE id=$${pi} AND contador_id=$${pi+1}`, params);
-
-        // Registra histórico
-        await pool.query(
-            `INSERT INTO crm_historico_etapas (contato_id, contador_id, etapa_anterior, etapa_nova, responsavel, data_mudanca)
-             VALUES ($1,$2,$3,$4,$5,NOW())`,
-            [id, req.contadorId, etapaAnterior, status, responsavel || null]
-        );
+        if (atual.rows[0].status === status) return res.json({ mensagem: 'Sem alteração.' });
+        await pool.query('UPDATE crm_contatos SET status=$1 WHERE id=$2 AND contador_id=$3', [status, id, req.contadorId]);
         res.json({ mensagem: 'Etapa atualizada!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1182,225 +1151,7 @@ app.put('/api/crm/contatos/:id/etapa', verificarTokenContador, async (req, res) 
 app.delete('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => {
     try {
         await pool.query('DELETE FROM crm_contatos WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
-        await pool.query('DELETE FROM crm_atividades WHERE contato_id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
-        await pool.query('DELETE FROM crm_historico_etapas WHERE contato_id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
-        await pool.query('DELETE FROM crm_tarefas WHERE contato_id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
         res.json({ mensagem: 'Contato excluído.' });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro: ' + erro.message });
-    }
-});
-
-// Dashboard do CRM - indicadores, conversão, análise por etapa, fontes, motivos
-app.get('/api/crm/dashboard', verificarTokenContador, async (req, res) => {
-    try {
-        const cid = req.contadorId;
-        const contatos = await pool.query('SELECT * FROM crm_contatos WHERE contador_id=$1', [cid]);
-        const rows = contatos.rows;
-        const total = rows.length;
-        const leads = rows.filter(c => c.tipo === 'lead').length;
-        const clientes = rows.filter(c => c.tipo === 'cliente').length;
-        const ganhos = rows.filter(c => c.status === 'ganho').length;
-        const perdidos = rows.filter(c => c.status === 'perdido').length;
-        const emAndamento = rows.filter(c => ['novo','contatado','negociando'].includes(c.status)).length;
-        const valorTotal = rows.filter(c => c.status !== 'perdido').reduce((s,c) => s + Number(c.valor_proposta||0), 0);
-        const valorFechado = rows.filter(c => c.status === 'ganho').reduce((s,c) => s + Number(c.valor_proposta||0), 0);
-
-        // Análise por etapa
-        const etapas = ['novo','contatado','negociando','ganho','perdido'];
-        const analiseEtapa = etapas.map(e => {
-            const count = rows.filter(c => c.status === e).length;
-            return { etapa: e, quantidade: count, percentual: total > 0 ? +(count/total*100).toFixed(1) : 0 };
-        });
-
-        // Taxas de conversão
-        const totalLeads = rows.filter(c => c.tipo === 'lead' || c.tipo === 'prospect' || c.tipo === 'cliente').length;
-        const totalProposta = rows.filter(c => ['negociando','ganho','perdido'].includes(c.status)).length;
-        const totalFechado = ganhos;
-        const convLeadCliente = totalLeads > 0 ? +(clientes/totalLeads*100).toFixed(1) : 0;
-        const convLeadProposta = totalLeads > 0 ? +(totalProposta/totalLeads*100).toFixed(1) : 0;
-        const convPropostaFechado = totalProposta > 0 ? +(totalFechado/totalProposta*100).toFixed(1) : 0;
-        const convGeral = total > 0 ? +(ganhos/total*100).toFixed(1) : 0;
-
-        // Tempo médio de conversão (em dias)
-        function avgDays(arr) { if (!arr.length) return 0; const sum = arr.reduce((s,v)=>s+v,0); return +(sum/arr.length).toFixed(1); }
-        const tCriacaoPrimeiroContato = avgDays(rows.filter(c=>c.datacriacao&&c.data_primeiro_contato).map(c=>(new Date(c.data_primeiro_contato)-new Date(c.datacriacao))/86400000));
-        const tPrimeiroContatoProposta = avgDays(rows.filter(c=>c.data_primeiro_contato&&c.data_proposta).map(c=>(new Date(c.data_proposta)-new Date(c.data_primeiro_contato))/86400000));
-        const tPropostaFechamento = avgDays(rows.filter(c=>c.data_proposta&&c.data_fechamento).map(c=>(new Date(c.data_fechamento)-new Date(c.data_proposta))/86400000));
-        const tTotal = avgDays(rows.filter(c=>c.datacriacao&&c.data_fechamento).map(c=>(new Date(c.data_fechamento)-new Date(c.datacriacao))/86400000));
-
-        // Fontes dos leads
-        const fontesMap = {};
-        rows.forEach(c => { const o = c.origem || 'nao_informado'; fontesMap[o] = (fontesMap[o]||0)+1; });
-        const fontes = Object.entries(fontesMap).map(([origem,count])=>({origem,count}));
-
-        // Motivos de perda
-        const motivosMap = {};
-        rows.filter(c=>c.status==='perdido').forEach(c => { const m = c.motivo_perda || 'nao_informado'; motivosMap[m]=(motivosMap[m]||0)+1; });
-        const motivos = Object.entries(motivosMap).map(([motivo,count])=>({motivo,count}));
-
-        // Negociações por status ao longo do tempo (últimos 90 dias agrupado por dia)
-        const series = await pool.query(
-            `SELECT DATE(datacriacao) as dia,
-                COUNT(*) FILTER (WHERE status='ganho') as ganhos,
-                COUNT(*) FILTER (WHERE status='perdido') as perdidos,
-                COUNT(*) FILTER (WHERE status IN ('novo','contatado','negociando')) as andamento,
-                COUNT(*) as total
-             FROM crm_contatos WHERE contador_id=$1 AND datacriacao >= NOW() - INTERVAL '90 days'
-             GROUP BY DATE(datacriacao) ORDER BY dia`, [cid]
-        );
-
-        // Tarefas
-        const tarefasHoje = await pool.query("SELECT COUNT(*) as t FROM crm_tarefas WHERE contador_id=$1 AND status='pendente' AND prazo=CURRENT_DATE", [cid]);
-        const tarefasAtrasadas = await pool.query("SELECT COUNT(*) as t FROM crm_tarefas WHERE contador_id=$1 AND status='pendente' AND prazo < CURRENT_DATE", [cid]);
-
-        res.json({
-            cards: { total, leads, clientes, ganhos, perdidos, emAndamento, valorTotal: +valorTotal.toFixed(2), valorFechado: +valorFechado.toFixed(2) },
-            analiseEtapa,
-            conversao: { convLeadCliente, convLeadProposta, convPropostaFechado, convGeral },
-            tempoMedio: { tCriacaoPrimeiroContato, tPrimeiroContatoProposta, tPropostaFechamento, tTotal },
-            fontes,
-            motivos,
-            series: series.rows,
-            tarefas: { hoje: parseInt(tarefasHoje.rows[0].t), atrasadas: parseInt(tarefasAtrasadas.rows[0].t) }
-        });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro: ' + erro.message });
-    }
-});
-
-// Atividades do CRM
-app.get('/api/crm/contatos/:id/atividades', verificarTokenContador, async (req, res) => {
-    try {
-        const r = await pool.query('SELECT * FROM crm_atividades WHERE contato_id=$1 AND contador_id=$2 ORDER BY data DESC', [req.params.id, req.contadorId]);
-        res.json(r.rows);
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-app.post('/api/crm/contatos/:id/atividades', verificarTokenContador, async (req, res) => {
-    try {
-        const { tipo, descricao, resultado, proxima_acao, responsavel } = req.body;
-        const r = await pool.query(
-            `INSERT INTO crm_atividades (contato_id, contador_id, tipo, descricao, resultado, proxima_acao, responsavel, data)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,NOW()) RETURNING id`,
-            [req.params.id, req.contadorId, tipo||'ligacao', descricao||'', resultado||'', proxima_acao||'', responsavel||'']
-        );
-        // Atualiza data do último contato
-        await pool.query('UPDATE crm_contatos SET data_ultimo_contato=NOW() WHERE id=$1 AND contador_id=$2', [req.params.id, req.contadorId]);
-        res.status(201).json({ mensagem: 'Atividade registrada!', id: r.rows[0].id });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Histórico de etapas
-app.get('/api/crm/contatos/:id/historico', verificarTokenContador, async (req, res) => {
-    try {
-        const r = await pool.query('SELECT * FROM crm_historico_etapas WHERE contato_id=$1 AND contador_id=$2 ORDER BY data_mudanca DESC', [req.params.id, req.contadorId]);
-        res.json(r.rows);
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Tarefas do CRM
-app.get('/api/crm/tarefas', verificarTokenContador, async (req, res) => {
-    try {
-        const r = await pool.query(
-            `SELECT t.*, c.nome as contato_nome, c.empresa as contato_empresa
-             FROM crm_tarefas t LEFT JOIN crm_contatos c ON t.contato_id=c.id
-             WHERE t.contador_id=$1 ORDER BY
-             CASE t.prioridade WHEN 'urgente' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END, t.prazo ASC NULLS LAST`,
-            [req.contadorId]
-        );
-        res.json(r.rows);
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-app.post('/api/crm/tarefas', verificarTokenContador, async (req, res) => {
-    try {
-        const { contato_id, empresa_id, descricao, prazo, responsavel, prioridade } = req.body;
-        const r = await pool.query(
-            `INSERT INTO crm_tarefas (contato_id, contador_id, empresa_id, descricao, prazo, responsavel, prioridade, status, datacriacao)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,'pendente',NOW()) RETURNING id`,
-            [contato_id||null, req.contadorId, empresa_id||null, descricao, prazo||null, responsavel||'', prioridade||'media']
-        );
-        res.status(201).json({ mensagem: 'Tarefa criada!', id: r.rows[0].id });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-app.put('/api/crm/tarefas/:id', verificarTokenContador, async (req, res) => {
-    try {
-        const { status, prioridade } = req.body;
-        await pool.query('UPDATE crm_tarefas SET status=COALESCE($1,status), prioridade=COALESCE($2,prioridade) WHERE id=$3 AND contador_id=$4',
-            [status, prioridade, req.params.id, req.contadorId]);
-        res.json({ mensagem: 'Tarefa atualizada!' });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-app.delete('/api/crm/tarefas/:id', verificarTokenContador, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM crm_tarefas WHERE id=$1 AND contador_id=$2', [req.params.id, req.contadorId]);
-        res.json({ mensagem: 'Tarefa excluída.' });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Converter lead em cliente (cria empresa vinculada, não duplica)
-app.post('/api/crm/contatos/:id/converter', verificarTokenContador, async (req, res) => {
-    try {
-        const { cnpj, razao_social, email_empresa, senha } = req.body;
-        const contato = await pool.query('SELECT * FROM crm_contatos WHERE id=$1 AND contador_id=$2', [req.params.id, req.contadorId]);
-        if (contato.rows.length === 0) return res.status(404).json({ erro: 'Contato não encontrado.' });
-        const c = contato.rows[0];
-        if (c.empresa_id) return res.status(400).json({ erro: 'Contato já convertido em cliente.' });
-
-        let empresaId = null;
-        if (cnpj) {
-            const cnpjLimpo = cnpj.replace(/\D/g,'');
-            const existente = await pool.query('SELECT id FROM empresas WHERE cnpj=$1', [cnpjLimpo]);
-            if (existente.rows.length > 0) {
-                empresaId = existente.rows[0].id;
-            } else {
-                const senhaHash = senha ? await bcrypt.hash(senha, await bcrypt.genSalt(10)) : null;
-                const novaEmpresa = await pool.query(
-                    `INSERT INTO empresas (cnpj, razaosocial, emailempresa, senha, senhahash, contador_id, contadorid, primeiro_acesso, datacriacao)
-                     VALUES ($1,$2,$3,$4,$5,$6,$6,TRUE,NOW()) RETURNING id`,
-                    [cnpjLimpo, razao_social || c.empresa || c.nome, email_empresa || c.email || '', senhaHash, senhaHash, req.contadorId]
-                );
-                empresaId = novaEmpresa.rows[0].id;
-            }
-        }
-        await pool.query('UPDATE crm_contatos SET tipo=$1, status=$2, empresa_id=$3, data_fechamento=NOW() WHERE id=$4 AND contador_id=$5',
-            ['cliente', 'ganho', empresaId, req.params.id, req.contadorId]);
-        await pool.query(
-            `INSERT INTO crm_historico_etapas (contato_id, contador_id, etapa_anterior, etapa_nova, responsavel, data_mudanca)
-             VALUES ($1,$2,$3,'ganho',$4,NOW())`,
-            [req.params.id, req.contadorId, c.status, req.body.responsavel || null]
-        );
-        res.json({ mensagem: 'Lead convertido em cliente com sucesso!', empresaId });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Exportar contatos em CSV
-app.get('/api/crm/export', verificarTokenContador, async (req, res) => {
-    try {
-        const tipo = req.query.tipo;
-        let rows = (await pool.query('SELECT * FROM crm_contatos WHERE contador_id=$1 ORDER BY datacriacao DESC', [req.contadorId])).rows;
-        if (tipo === 'ganhos') rows = rows.filter(c => c.status === 'ganho');
-        else if (tipo === 'perdidos') rows = rows.filter(c => c.status === 'perdido');
-        else if (tipo === 'clientes') rows = rows.filter(c => c.tipo === 'cliente');
-        else if (tipo === 'leads') rows = rows.filter(c => c.tipo === 'lead');
-        const headers = ['id','nome','email','telefone','whatsapp','empresa','cargo','tipo','status','origem','servico_interesse','responsavel','valor_proposta','motivo_perda','datacriacao'];
-        const csv = [headers.join(';')];
-        rows.forEach(r => { csv.push(headers.map(h => `"${String(r[h] ?? '').replace(/"/g,'""')}"`).join(';')); });
-        res.setHeader('Content-Type','text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition',`attachment; filename="crm_${tipo||'contatos'}.csv"`);
-        res.send('\ufeff' + csv.join('\n'));
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// ==========================================
-// 15. AUDIT LOG
-// ==========================================
-app.get('/api/audit', verificarTokenContador, async (req, res) => {
-    try {
-        const resultado = await pool.query(
-            'SELECT * FROM audit_log WHERE usuario_id = $1 AND usuario_tipo = $2 ORDER BY datacriacao DESC LIMIT 100',
-            [req.contadorId, 'contador']
-        );
-        res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
