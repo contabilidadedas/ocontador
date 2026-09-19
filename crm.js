@@ -38,7 +38,7 @@
     const css = `
         <style id="crm-styles">
         /* CRM — Funil de Vendas */
-        .crm-topo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .crm-topo { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
         .crm-card-stat {
             background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(111,66,193,0.06));
             border: 1px solid rgba(59,130,246,0.2);
@@ -98,14 +98,24 @@
         .crm-btn-new:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,130,246,0.3); }
         .crm-btn-new i { width: 16px; height: 16px; }
 
-        .crm-kanban { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; min-height: 400px; }
+        .crm-kanban {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 12px;
+            padding-bottom: 12px;
+            min-height: 400px;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
         .crm-col {
-            flex: 1; min-width: 250px;
+            min-width: 0;
             background: rgba(26,31,43,0.6);
             border: 1px solid var(--border-light, #2a3142);
             border-radius: 16px;
             display: flex; flex-direction: column;
             transition: border-color 0.2s;
+            box-sizing: border-box;
         }
         .crm-col-head {
             padding: 14px 16px;
@@ -143,11 +153,14 @@
             cursor: grab;
             transition: border-color 0.15s, box-shadow 0.2s, transform 0.15s;
             animation: crmFadeIn 0.25s ease;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
         }
         .crm-contact-card:hover { border-color: var(--accent-blue, #3b82f6); box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
         .crm-contact-card.dragging { opacity: 0.35; cursor: grabbing; }
-        .crm-contact-name { font-size: 14px; font-weight: 600; color: var(--text-primary, #fff); margin-bottom: 6px; }
-        .crm-contact-info { font-size: 12px; color: var(--text-secondary, #a0a5b1); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+        .crm-contact-name { font-size: 14px; font-weight: 600; color: var(--text-primary, #fff); margin-bottom: 6px; word-break: break-word; overflow-wrap: anywhere; }
+        .crm-contact-info { font-size: 12px; color: var(--text-secondary, #a0a5b1); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
         .crm-contact-info i { width: 13px; height: 13px; opacity: 0.6; flex-shrink: 0; }
         .crm-contact-actions { display: flex; gap: 6px; margin-top: 10px; }
         .crm-btn-mini {
@@ -188,8 +201,24 @@
 
         @keyframes crmFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
-        @media (max-width: 768px) {
+        /* Tablet: rolagem horizontal apenas dentro do kanban */
+        @media (max-width: 1024px) {
+            .crm-kanban {
+                display: flex;
+                overflow-x: auto;
+                gap: 12px;
+            }
+            .crm-col { flex: 0 0 260px; min-width: 260px; }
+        }
+        /* Celular: colunas compactas com rolagem dentro do kanban */
+        @media (max-width: 640px) {
             .crm-topo { grid-template-columns: 1fr 1fr; }
+            .crm-kanban {
+                display: flex;
+                overflow-x: auto;
+                gap: 10px;
+            }
+            .crm-col { flex: 0 0 85%; min-width: 85%; }
             .crm-form-grid { grid-template-columns: 1fr; }
             .crm-details-grid { grid-template-columns: 1fr; }
         }
