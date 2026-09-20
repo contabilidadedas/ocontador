@@ -44,6 +44,8 @@ async function criarTabelasAutomaticamente() {
                 email VARCHAR(255) UNIQUE NOT NULL,
                 senha VARCHAR(255),
                 senhahash VARCHAR(255),
+                is_admin BOOLEAN DEFAULT FALSE,
+                ativo BOOLEAN DEFAULT TRUE,
                 datacriacao TIMESTAMP DEFAULT NOW()
             );
 
@@ -250,6 +252,8 @@ async function criarTabelasAutomaticamente() {
         `);
 
         // Garante colunas em tabelas antigas
+        await pool.query(`ALTER TABLE contadores ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;`);
+        await pool.query(`ALTER TABLE contadores ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;`);
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS primeiro_acesso BOOLEAN DEFAULT TRUE;`);
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS inadimplente BOOLEAN DEFAULT FALSE;`);
         await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pendente';`);
@@ -310,6 +314,17 @@ function verificarTokenCliente(req, res, next) {
 // ==========================================
 // 1. ROTAS DE CONTADORES
 // ==========================================
+// Verifica se ainda não existe nenhum contador (primeiro cadastro = admin)
+app.get('/api/contador/cadastro-disponivel', async (req, res) => {
+    try {
+        const resultado = await pool.query('SELECT COUNT(*) as total FROM contadores');
+        const disponivel = parseInt(resultado.rows[0].total) === 0;
+        res.json({ disponivel });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
+    }
+});
+
 app.post('/api/contador/cadastro', async (req, res) => {
     try {
         let { nomeEscritorio, email, senha } = req.body;
@@ -317,13 +332,33 @@ app.post('/api/contador/cadastro', async (req, res) => {
         email = email.trim().toLowerCase();
         const usuarioExiste = await pool.query('SELECT * FROM contadores WHERE LOWER(email) = $1', [email]);
         if (usuarioExiste.rows.length > 0) return res.status(400).json({ erro: 'Este e-mail já está cadastrado.' });
+
+        // Verifica se já existem contadores cadastrados
+        const totalContadores = await pool.query('SELECT COUNT(*) as total FROM contadores');
+        const ehPrimeiro = parseInt(totalContadores.rows[0].total) === 0;
+
+        // Se não é o primeiro, exige token de admin
+        if (!ehPrimeiro) {
+            const authHeader = req.headers['authorization'];
+            if (!authHeader) return res.status(403).json({ erro: 'Cadastro bloqueado. Solicite acesso ao administrador.' });
+            try {
+                const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+                const adminCheck = await pool.query('SELECT is_admin FROM contadores WHERE id = $1', [decoded.id]);
+                if (!adminCheck.rows[0] || !adminCheck.rows[0].is_admin) {
+                    return res.status(403).json({ erro: 'Apenas administradores podem criar novos acessos.' });
+                }
+            } catch (e) {
+                return res.status(403).json({ erro: 'Cadastro bloqueado. Solicite acesso ao administrador.' });
+            }
+        }
+
         const senhaHash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
         const resultado = await pool.query(
-            'INSERT INTO contadores (nomeescritorio, email, senha, senhahash, datacriacao) VALUES ($1, $2, $3, $4, NOW()) RETURNING id',
-            [nomeEscritorio, email, senhaHash, senhaHash]
+            'INSERT INTO contadores (nomeescritorio, email, senha, senhahash, is_admin, datacriacao) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id',
+            [nomeEscritorio, email, senhaHash, senhaHash, ehPrimeiro]
         );
-        await registrarAuditoria(resultado.rows[0].id, 'contador', 'Cadastro de escritório', req);
-        res.status(201).json({ mensagem: 'Escritório cadastrado com sucesso!' });
+        await registrarAuditoria(resultado.rows[0].id, 'contador', ehPrimeiro ? 'Cadastro de escritório (Admin inicial)' : 'Admin criou novo acesso', req);
+        res.status(201).json({ mensagem: ehPrimeiro ? 'Escritório cadastrado! Você é o administrador.' : 'Acesso criado com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
     }
@@ -337,13 +372,101 @@ app.post('/api/contador/login', async (req, res) => {
         const resultado = await pool.query('SELECT * FROM contadores WHERE LOWER(email) = $1', [email]);
         if (resultado.rows.length === 0) return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
         const contador = resultado.rows[0];
+        if (contador.ativo === false) return res.status(403).json({ erro: 'Conta desativada. Contate o administrador.' });
         const senhaValida = await bcrypt.compare(senha, contador.senhahash || contador.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
-        const token = jwt.sign({ id: contador.id, email: contador.email }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: contador.id, email: contador.email, isAdmin: contador.is_admin || false }, JWT_SECRET, { expiresIn: '7d' });
         await registrarAuditoria(contador.id, 'contador', 'Login no painel', req);
-        res.json({ mensagem: 'Login realizado!', token, nomeEscritorio: contador.nomeescritorio || 'Escritório', contadorId: contador.id });
+        res.json({ mensagem: 'Login realizado!', token, nomeEscritorio: contador.nomeescritorio || 'Escritório', contadorId: contador.id, isAdmin: contador.is_admin || false });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro no servidor: ' + erro.message });
+    }
+});
+
+// Middleware: exige token de admin
+function verificarAdmin(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) return res.status(401).json({ erro: 'Token não fornecido.' });
+    try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+        req.contadorId = decoded.id;
+        if (!decoded.isAdmin) return res.status(403).json({ erro: 'Acesso restrito ao administrador.' });
+        next();
+    } catch (err) {
+        return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+    }
+}
+
+// ==========================================
+// 1b. ROTAS DE ADMINISTRAÇÃO (Gerenciar Acessos)
+// ==========================================
+app.get('/api/admin/contadores', verificarAdmin, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            'SELECT id, nomeescritorio, email, is_admin, ativo, datacriacao FROM contadores ORDER BY datacriacao DESC'
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao listar acessos: ' + erro.message });
+    }
+});
+
+app.post('/api/admin/contadores', verificarAdmin, async (req, res) => {
+    try {
+        let { nomeEscritorio, email, senha, isAdmin } = req.body;
+        if (!nomeEscritorio || !email || !senha) return res.status(400).json({ erro: 'Preencha todos os campos.' });
+        email = email.trim().toLowerCase();
+        const usuarioExiste = await pool.query('SELECT * FROM contadores WHERE LOWER(email) = $1', [email]);
+        if (usuarioExiste.rows.length > 0) return res.status(400).json({ erro: 'Este e-mail já está cadastrado.' });
+        const senhaHash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
+        const resultado = await pool.query(
+            'INSERT INTO contadores (nomeescritorio, email, senha, senhahash, is_admin, ativo, datacriacao) VALUES ($1, $2, $3, $4, $5, TRUE, NOW()) RETURNING id',
+            [nomeEscritorio, email, senhaHash, senhaHash, isAdmin || false]
+        );
+        await registrarAuditoria(req.contadorId, 'contador', `Admin criou acesso: ${nomeEscritorio} (${email})`, req);
+        res.status(201).json({ mensagem: 'Acesso criado com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao criar acesso: ' + erro.message });
+    }
+});
+
+app.put('/api/admin/contadores/:id', verificarAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { is_admin, ativo, senha } = req.body;
+        if (senha) {
+            const senhaHash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
+            await pool.query('UPDATE contadores SET senhahash = $1, senha = $1 WHERE id = $2', [senhaHash, id]);
+        }
+        if (typeof is_admin === 'boolean') {
+            // Não permite que o único admin remova o próprio privilégio
+            if (req.contadorId == id && !is_admin) {
+                const totalAdmins = await pool.query('SELECT COUNT(*) as total FROM contadores WHERE is_admin = TRUE');
+                if (parseInt(totalAdmins.rows[0].total) <= 1) {
+                    return res.status(400).json({ erro: 'Não é possível remover o privilégio do único administrador.' });
+                }
+            }
+            await pool.query('UPDATE contadores SET is_admin = $1 WHERE id = $2', [is_admin, id]);
+        }
+        if (typeof ativo === 'boolean') {
+            await pool.query('UPDATE contadores SET ativo = $1 WHERE id = $2', [ativo, id]);
+        }
+        await registrarAuditoria(req.contadorId, 'contador', `Admin editou acesso ID: ${id}`, req);
+        res.json({ mensagem: 'Acesso atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
+    }
+});
+
+app.delete('/api/admin/contadores/:id', verificarAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (req.contadorId == id) return res.status(400).json({ erro: 'Você não pode excluir sua própria conta.' });
+        await pool.query('DELETE FROM contadores WHERE id = $1', [id]);
+        await registrarAuditoria(req.contadorId, 'contador', `Admin excluiu acesso ID: ${id}`, req);
+        res.json({ mensagem: 'Acesso excluído.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao excluir: ' + erro.message });
     }
 });
 

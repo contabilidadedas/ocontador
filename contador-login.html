@@ -66,10 +66,13 @@
         </form>
 
         <!-- Alternador entre Login e Cadastro -->
-        <div class="mt-6 text-center">
+        <div class="mt-6 text-center" id="div-alternar">
             <button id="btn-alternar" type="button" onclick="alternarModo()" class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">
                 Não tem uma conta? Cadastre seu escritório aqui
             </button>
+        </div>
+        <div class="mt-6 text-center hidden" id="div-cadastro-bloqueado">
+            <p class="text-xs text-slate-500">Cadastros são gerenciados pelo administrador.</p>
         </div>
 
         <div class="mt-8 pt-6 border-t border-slate-800 text-center">
@@ -79,6 +82,18 @@
     </div>
 
     <script>
+        // Verifica se o cadastro público está disponível (apenas o primeiro acesso)
+        (async function() {
+            try {
+                const resp = await fetch('/api/contador/cadastro-disponivel');
+                const data = await resp.json();
+                if (!data.disponivel) {
+                    document.getElementById('div-alternar').classList.add('hidden');
+                    document.getElementById('div-cadastro-bloqueado').classList.remove('hidden');
+                }
+            } catch (e) { /* se falhar, mantém o comportamento padrão */ }
+        })();
+
         let modoCadastro = false;
 
         function alternarModo() {
@@ -143,6 +158,7 @@
 
                 localStorage.setItem('tokenContador', dados.token);
                 localStorage.setItem('nomeEscritorio', nomeEscritorioSalvar);
+                localStorage.setItem('isAdmin', dados.isAdmin ? 'true' : 'false');
 
                 window.location.href = 'painel-contador.html';
             } catch (erro) {
