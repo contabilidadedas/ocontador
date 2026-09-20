@@ -162,15 +162,16 @@
         .crm-contact-name { font-size: 14px; font-weight: 600; color: var(--text-primary, #fff); margin-bottom: 6px; word-break: break-word; overflow-wrap: anywhere; }
         .crm-contact-info { font-size: 12px; color: var(--text-secondary, #a0a5b1); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
         .crm-contact-info i { width: 13px; height: 13px; opacity: 0.6; flex-shrink: 0; }
-        .crm-contact-actions { display: flex; gap: 6px; margin-top: 10px; }
+        .crm-contact-actions { display: flex; gap: 4px; margin-top: 10px; justify-content: flex-end; }
         .crm-btn-mini {
             font-size: 11px; font-weight: 600;
-            padding: 5px 10px; border-radius: 8px;
+            padding: 4px 6px; border-radius: 6px;
             border: 1px solid transparent; cursor: pointer;
             transition: all 0.15s; font-family: inherit;
-            display: flex; align-items: center; gap: 4px;
+            display: flex; align-items: center; justify-content: center; gap: 3px;
+            line-height: 1; flex-shrink: 0;
         }
-        .crm-btn-mini i { width: 12px; height: 12px; }
+        .crm-btn-mini i { width: 13px; height: 13px; }
         .crm-btn-edit { background: rgba(59,130,246,0.12); color: #60a5fa; border-color: rgba(59,130,246,0.2); }
         .crm-btn-edit:hover { background: rgba(59,130,246,0.2); }
         .crm-btn-del { background: rgba(220,38,38,0.1); color: #f87171; border-color: rgba(220,38,38,0.2); }
@@ -328,9 +329,9 @@
                                 ${c.email ? `<div class="crm-contact-info"><i data-lucide="mail"></i> ${esc(c.email)}</div>` : ''}
                                 ${c.empresa ? `<div class="crm-contact-info"><i data-lucide="building-2"></i> ${esc(c.empresa)}</div>` : ''}
                                 <div class="crm-contact-actions">
-                                    <button class="crm-btn-mini crm-btn-edit" onclick="crmEditar(${c.id})"><i data-lucide="pencil"></i> Editar</button>
-                                    <button class="crm-btn-mini crm-btn-del" onclick="crmExcluir(${c.id})"><i data-lucide="trash-2"></i> Excluir</button>
-                                    <button class="crm-btn-mini crm-btn-info" onclick="crmDetalhes(${c.id})"><i data-lucide="info"></i> Detalhes</button>
+                                    <button class="crm-btn-mini crm-btn-info" onclick="crmDetalhes(${c.id})" title="Detalhes"><i data-lucide="info"></i></button>
+                                    <button class="crm-btn-mini crm-btn-edit" onclick="crmEditar(${c.id})" title="Editar"><i data-lucide="pencil"></i></button>
+                                    <button class="crm-btn-mini crm-btn-del" onclick="crmExcluir(${c.id})" title="Excluir"><i data-lucide="trash-2"></i></button>
                                 </div>
                             </div>`).join('')}
                     </div>

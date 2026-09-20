@@ -275,6 +275,7 @@
                 <a class="nav-item" data-view="relatorios" onclick="navigate('relatorios')"><i data-lucide="bar-chart-3"></i> Relatórios</a>
                 <a class="nav-item" data-view="procuracoes" onclick="navigate('procuracoes')"><i data-lucide="shield-check"></i> Procurações e Certificados</a>
                 <a class="nav-item" data-view="configuracoes" onclick="navigate('configuracoes')"><i data-lucide="settings"></i> Configurações</a>
+                <a class="nav-item" data-view="gerenciar-acessos" onclick="navigate('gerenciar-acessos')" id="nav-admin" style="display:none;"><i data-lucide="user-cog"></i> Gerenciar Acessos</a>
             </div>
 
             <div class="sidebar-footer">
@@ -418,6 +419,7 @@
 <script>
 const token = localStorage.getItem('tokenContador');
 const nomeEscritorio = localStorage.getItem('nomeEscritorio');
+const isAdmin = localStorage.getItem('isAdmin') === 'true';
 let empresasCache = [];
 
 if (!token || token === 'null') {
@@ -427,6 +429,10 @@ if (!token || token === 'null') {
 
 document.getElementById('topbar-nome').textContent = nomeEscritorio || 'Contador';
 document.getElementById('sidebar-escritorio').textContent = nomeEscritorio || 'Escritório';
+if (isAdmin) {
+    const navAdmin = document.getElementById('nav-admin');
+    if (navAdmin) navAdmin.style.display = '';
+}
 
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('open');
@@ -1010,6 +1016,7 @@ views.configuracoes = async function() {
 // HELPERS
 // ==========================================
 function emptyRow(cols, msg) { return `<tr><td colspan="${cols}" style="text-align:center;padding:40px;color:var(--text-muted);">${msg}</td></tr>`; }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
 function abrirModal(id) { document.getElementById(id).classList.add('active'); }
 function fecharModal(id) { document.getElementById(id).classList.remove('active'); }
@@ -1279,6 +1286,170 @@ async function deletarGuia(id) {
     if (!confirm('Excluir esta guia?')) return;
     try { await api(`/api/guias/${id}`, { method: 'DELETE' }); navigate('guias'); } catch (e) { alert(e.message); }
 }
+
+// ==========================================
+// VIEW: GERENCIAR ACESSOS (Admin)
+// ==========================================
+views['gerenciar-acessos'] = async function () {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Gerenciar Acessos</h1>
+        <p class="page-subtitle">Crie e gerencie acessos de contadores ao sistema</p>
+        <div style="display:flex;gap:12px;margin-bottom:20px;">
+            <button class="btn-top btn-top-primary" onclick="adminNovoAcesso()"><i data-lucide="plus"></i> Novo Acesso</button>
+        </div>
+        <div class="table-card">
+            <div class="table-header">
+                <h3>Contadores Cadastrados</h3>
+                <p>Gerencie quem tem acesso ao painel</p>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="data-table" id="admin-table">
+                    <thead><tr><th>Escritório</th><th>E-mail</th><th>Tipo</th><th>Status</th><th style="text-align:right;">Ações</th></tr></thead>
+                    <tbody id="admin-tbody"><tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">Carregando...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    `;
+    try {
+        const lista = await api('/api/admin/contadores');
+        const tbody = document.getElementById('admin-tbody');
+        if (lista.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum acesso cadastrado.</td></tr>';
+        } else {
+            tbody.innerHTML = lista.map(c => `
+                <tr>
+                    <td style="font-weight:600;">${esc(c.nomeescritorio)}</td>
+                    <td>${esc(c.email)}</td>
+                    <td>${c.is_admin ? '<span style="color:#a78bfa;font-weight:600;">Administrador</span>' : '<span style="color:var(--text-secondary);">Contador</span>'}</td>
+                    <td>${c.ativo !== false ? '<span style="color:#4ade80;font-weight:600;">Ativo</span>' : '<span style="color:#f87171;font-weight:600;">Desativado</span>'}</td>
+                    <td style="text-align:right;">
+                        <div style="display:inline-flex;gap:6px;">
+                            <button class="crm-btn-mini crm-btn-edit" onclick="adminEditarAcesso(${c.id})" title="Editar"><i data-lucide="pencil"></i></button>
+                            <button class="crm-btn-mini crm-btn-del" onclick="adminExcluirAcesso(${c.id}, '${esc(c.email)}')" title="Excluir"><i data-lucide="trash-2"></i></button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+    } catch (e) {
+        document.getElementById('admin-tbody').innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;color:#f87171;">${esc(e.message)}</td></tr>`;
+    }
+    lucide.createIcons();
+};
+
+window.adminNovoAcesso = function () {
+    showDynamicModal('Novo Acesso', `
+        <form onsubmit="adminSalvarNovo(event)">
+            <div class="crm-form-group">
+                <label>Nome do Escritório *</label>
+                <input type="text" id="admin-nome" required placeholder="Ex: Contabilidade Silva">
+            </div>
+            <div class="crm-form-group">
+                <label>E-mail *</label>
+                <input type="email" id="admin-email" required placeholder="contato@escritorio.com">
+            </div>
+            <div class="crm-form-group">
+                <label>Senha *</label>
+                <input type="text" id="admin-senha" required placeholder="Mínimo 6 caracteres" minlength="6">
+            </div>
+            <div class="crm-form-group">
+                <label>Tipo de Acesso</label>
+                <select id="admin-isadmin">
+                    <option value="false">Contador (acesso padrão)</option>
+                    <option value="true">Administrador (acesso total)</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button>
+                <button type="submit" class="btn-submit">Criar Acesso</button>
+            </div>
+        </form>
+    `);
+};
+
+window.adminSalvarNovo = async function (e) {
+    e.preventDefault();
+    try {
+        await api('/api/admin/contadores', {
+            method: 'POST',
+            body: JSON.stringify({
+                nomeEscritorio: document.getElementById('admin-nome').value,
+                email: document.getElementById('admin-email').value,
+                senha: document.getElementById('admin-senha').value,
+                isAdmin: document.getElementById('admin-isadmin').value === 'true'
+            })
+        });
+        fecharModal('modal-dynamic');
+        navigate('gerenciar-acessos');
+    } catch (e) {
+        alert(e.message);
+    }
+};
+
+window.adminEditarAcesso = async function (id) {
+    try {
+        const lista = await api('/api/admin/contadores');
+        const c = lista.find(x => x.id === id);
+        if (!c) return;
+        showDynamicModal('Editar Acesso', `
+            <form onsubmit="adminSalvarEdicao(event, ${id})">
+                <div class="crm-form-group">
+                    <label>Nome do Escritório</label>
+                    <input type="text" value="${esc(c.nomeescritorio)}" disabled style="opacity:0.6;">
+                </div>
+                <div class="crm-form-group">
+                    <label>E-mail</label>
+                    <input type="email" value="${esc(c.email)}" disabled style="opacity:0.6;">
+                </div>
+                <div class="crm-form-group">
+                    <label>Nova Senha (deixe em branco para manter)</label>
+                    <input type="text" id="admin-edit-senha" placeholder="Nova senha...">
+                </div>
+                <div class="crm-form-group">
+                    <label>Tipo de Acesso</label>
+                    <select id="admin-edit-isadmin">
+                        <option value="false" ${!c.is_admin ? 'selected' : ''}>Contador (acesso padrão)</option>
+                        <option value="true" ${c.is_admin ? 'selected' : ''}>Administrador (acesso total)</option>
+                    </select>
+                </div>
+                <div class="crm-form-group">
+                    <label>Status</label>
+                    <select id="admin-edit-ativo">
+                        <option value="true" ${c.ativo !== false ? 'selected' : ''}>Ativo</option>
+                        <option value="false" ${c.ativo === false ? 'selected' : ''}>Desativado</option>
+                    </select>
+                </div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                    <button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button>
+                    <button type="submit" class="btn-submit">Salvar</button>
+                </div>
+            </form>
+        `);
+    } catch (e) { alert(e.message); }
+};
+
+window.adminSalvarEdicao = async function (e, id) {
+    e.preventDefault();
+    const body = {
+        is_admin: document.getElementById('admin-edit-isadmin').value === 'true',
+        ativo: document.getElementById('admin-edit-ativo').value === 'true'
+    };
+    const senha = document.getElementById('admin-edit-senha').value;
+    if (senha) body.senha = senha;
+    try {
+        await api(`/api/admin/contadores/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        fecharModal('modal-dynamic');
+        navigate('gerenciar-acessos');
+    } catch (e) { alert(e.message); }
+};
+
+window.adminExcluirAcesso = async function (id, email) {
+    if (!confirm(`Excluir o acesso de "${email}"? Esta ação não pode ser desfeita.`)) return;
+    try {
+        await api(`/api/admin/contadores/${id}`, { method: 'DELETE' });
+        navigate('gerenciar-acessos');
+    } catch (e) { alert(e.message); }
+};
 
 function showDynamicModal(title, body) {
     let modal = document.getElementById('modal-dynamic');
