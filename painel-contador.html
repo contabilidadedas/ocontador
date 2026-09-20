@@ -6,6 +6,7 @@
     <title>Painel do Contador - Sistema de Gestão</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --bg-body: #0c0f16;
@@ -555,6 +556,12 @@ views.dashboard = async function() {
         ${isAdmin ? '<div id="admin-vendas-panel"></div>' : ''}
         <div class="metrics-grid" id="metrics-grid"></div>
         <div class="status-row" id="status-row"></div>
+        <div class="table-card" style="margin-bottom:28px;">
+            <div class="table-header">
+                <div><h3>Ganhos Mensais</h3><p>Recebidos vs. a receber nos últimos 6 meses</p></div>
+            </div>
+            <div style="padding:20px;"><canvas id="ganhos-chart" height="120"></canvas></div>
+        </div>
         <div class="table-card">
             <div class="table-header">
                 <div><h3>Pendências Recentes</h3><p>Últimas pendências cadastradas</p></div>
@@ -572,18 +579,20 @@ views.dashboard = async function() {
         // Painel de vendas do admin
         if (isAdmin) carregarPainelVendas();
 
-        const [stats, pendencias] = await Promise.all([
+        const [stats, pendencias, ganhosMensais] = await Promise.all([
             api('/api/dashboard/stats'),
-            api('/api/dashboard/pendencias-recentes')
+            api('/api/dashboard/pendencias-recentes'),
+            api('/api/dashboard/ganhos-mensais')
         ]);
 
+        const fmtMoeda = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         const cards = [
+            { label: 'Ganhos Recebidos', value: fmtMoeda(stats.ganhosRecebidos || 0), sub: 'honorários pagos', icon: 'dollar-sign', color: 'rgba(22,163,74,0.15)', iconColor: '#4ade80' },
+            { label: 'A Receber', value: fmtMoeda(stats.ganhosAReceber || 0), sub: 'honorários pendentes', icon: 'clock', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
             { label: 'Clientes', value: stats.clientes, sub: 'empresas ativas', icon: 'users', color: 'rgba(59,130,246,0.15)', iconColor: '#60a5fa' },
-            { label: 'Empresas', value: stats.clientes, sub: 'cadastradas', icon: 'building-2', color: 'rgba(111,66,193,0.15)', iconColor: '#a78bfa' },
             { label: 'Documentos Hoje', value: stats.documentosHoje, sub: 'recebidos hoje', icon: 'file-text', color: 'rgba(22,163,74,0.15)', iconColor: '#4ade80' },
             { label: 'Pendências', value: stats.pendencias, sub: 'em aberto', icon: 'alert-triangle', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
-            { label: 'Guias a Vencer', value: stats.guiasVencer, sub: 'próximos vencimentos', icon: 'calendar-clock', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' },
-            { label: 'Inadimplentes', value: stats.inadimplentes, sub: 'clientes em atraso', icon: 'circle-x', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' }
+            { label: 'Guias a Vencer', value: stats.guiasVencer, sub: 'próximos vencimentos', icon: 'calendar-clock', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' }
         ];
 
         document.getElementById('metrics-grid').innerHTML = cards.map(c => `
@@ -612,6 +621,50 @@ views.dashboard = async function() {
                 <div class="status-info"><div class="status-label">🟢 Em Dia</div><div class="status-count">Empresas regularizadas</div></div>
                 <div class="status-number" style="color:#4ade80;">${stats.status.emDia}</div>
             </div>`;
+
+        // --- Gráfico de Ganhos Mensais ---
+        const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+        const ultimos6 = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date();
+            d.setMonth(d.getMonth() - i);
+            ultimos6.push(d);
+        }
+        const labels = ultimos6.map(d => mesesNomes[d.getMonth()] + '/' + String(d.getFullYear()).slice(2));
+        const recebidoData = ultimos6.map(d => {
+            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            const found = ganhosMensais.find(g => g.mes === key);
+            return found ? parseFloat(found.recebido) : 0;
+        });
+        const pendenteData = ultimos6.map(d => {
+            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            const found = ganhosMensais.find(g => g.mes === key);
+            return found ? parseFloat(found.pendente) : 0;
+        });
+        const ctx = document.getElementById('ganhos-chart');
+        if (ctx) {
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Recebido', data: recebidoData, backgroundColor: '#4ade80', borderRadius: 6 },
+                        { label: 'A Receber', data: pendenteData, backgroundColor: '#fbbf24', borderRadius: 6 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { labels: { color: '#a0a5b1', font: { size: 12 } } },
+                        tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + Number(ctx.parsed.y).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#6b7280' }, grid: { display: false } },
+                        y: { ticks: { color: '#6b7280', callback: v => 'R$ ' + v }, grid: { color: '#1e2433' } }
+                    }
+                }
+            });
+        }
 
         const tb = document.getElementById('pendencias-tbody');
         if (pendencias.length === 0) {
@@ -1004,6 +1057,8 @@ views.relatorios = async function() {
             <h1 class="page-title">Relatórios</h1>
             <p class="page-subtitle">Visão consolidada do escritório</p>
             <div class="metrics-grid">
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Ganhos Recebidos</div><div class="metric-icon" style="background:rgba(22,163,74,0.15);color:#4ade80;"><i data-lucide="dollar-sign"></i></div></div><div class="metric-value">${Number(stats.ganhosRecebidos||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div><div class="metric-sub">honorários pagos</div></div>
+                <div class="metric-card"><div class="metric-card-top"><div class="metric-label">A Receber</div><div class="metric-icon" style="background:rgba(217,119,6,0.15);color:#fbbf24;"><i data-lucide="clock"></i></div></div><div class="metric-value">${Number(stats.ganhosAReceber||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div><div class="metric-sub">honorários pendentes</div></div>
                 <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Total de Clientes</div><div class="metric-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa;"><i data-lucide="users"></i></div></div><div class="metric-value">${stats.clientes}</div><div class="metric-sub">empresas ativas</div></div>
                 <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Pendências</div><div class="metric-icon" style="background:rgba(217,119,6,0.15);color:#fbbf24;"><i data-lucide="alert-triangle"></i></div></div><div class="metric-value">${stats.pendencias}</div><div class="metric-sub">em aberto</div></div>
                 <div class="metric-card"><div class="metric-card-top"><div class="metric-label">Guias a Vencer</div><div class="metric-icon" style="background:rgba(220,38,38,0.15);color:#f87171;"><i data-lucide="calendar-clock"></i></div></div><div class="metric-value">${stats.guiasVencer}</div><div class="metric-sub">próximos vencimentos</div></div>
