@@ -709,10 +709,14 @@ app.get('/api/dashboard/stats', verificarTokenContador, async (req, res) => {
                         WHERE (e.contador_id = $1 OR e.contadorid = $1) AND g.vencimento >= CURRENT_DATE AND g.status = 'pendente'`, [cid])
         ]);
 
-        const [urgente, atencao, emDia] = await Promise.all([
+        const [urgente, atencao, emDia, ganhos] = await Promise.all([
             pool.query('SELECT COUNT(*) as total FROM pendencias WHERE contador_id = $1 AND prioridade = $2 AND status = $3', [cid, 'urgente', 'pendente']),
             pool.query('SELECT COUNT(*) as total FROM pendencias WHERE contador_id = $1 AND prioridade = $2 AND status = $3', [cid, 'atencao', 'pendente']),
-            pool.query('SELECT COUNT(*) as total FROM empresas WHERE (contador_id = $1 OR contadorid = $1) AND (inadimplente = FALSE OR inadimplente IS NULL)', [cid])
+            pool.query('SELECT COUNT(*) as total FROM empresas WHERE (contador_id = $1 OR contadorid = $1) AND (inadimplente = FALSE OR inadimplente IS NULL)', [cid]),
+            pool.query(`SELECT
+                COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END), 0) as recebido,
+                COALESCE(SUM(CASE WHEN status != 'pago' THEN valor ELSE 0 END), 0) as pendente
+             FROM financeiro WHERE contador_id = $1`, [cid])
         ]);
 
         res.json({
@@ -721,6 +725,8 @@ app.get('/api/dashboard/stats', verificarTokenContador, async (req, res) => {
             documentosHoje: parseInt(docsHoje.rows[0].total),
             pendencias: parseInt(pendencias.rows[0].total),
             guiasVencer: parseInt(guiasVencer.rows[0].total),
+            ganhosRecebidos: parseFloat(ganhos.rows[0].recebido || 0),
+            ganhosAReceber: parseFloat(ganhos.rows[0].pendente || 0),
             status: {
                 urgente: parseInt(urgente.rows[0].total),
                 atencao: parseInt(atencao.rows[0].total),
@@ -729,6 +735,26 @@ app.get('/api/dashboard/stats', verificarTokenContador, async (req, res) => {
         });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao buscar estatísticas: ' + erro.message });
+    }
+});
+
+app.get('/api/dashboard/ganhos-mensais', verificarTokenContador, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT
+                TO_CHAR(DATE_TRUNC('month', datacriacao), 'YYYY-MM') as mes,
+                COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END), 0) as recebido,
+                COALESCE(SUM(CASE WHEN status != 'pago' THEN valor ELSE 0 END), 0) as pendente
+             FROM financeiro
+             WHERE contador_id = $1
+               AND datacriacao >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
+             GROUP BY DATE_TRUNC('month', datacriacao)
+             ORDER BY mes ASC`,
+            [req.contadorId]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
 });
 
