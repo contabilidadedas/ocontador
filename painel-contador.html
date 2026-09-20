@@ -243,6 +243,7 @@
                 <a class="nav-item" data-view="clientes" onclick="navigate('clientes')"><i data-lucide="users"></i> Clientes</a>
                 <a class="nav-item" data-view="empresas" onclick="navigate('empresas')"><i data-lucide="building-2"></i> Empresas</a>
                 <a class="nav-item" data-view="crm" onclick="navigate('crm')"><i data-lucide="contact"></i> CRM</a>
+                <a class="nav-item" data-view="gerenciar-acessos" onclick="navigate('gerenciar-acessos')" id="nav-admin-cadastros" style="display:none;"><i data-lucide="user-plus"></i> Novos Contadores</a>
             </div>
 
             <div class="nav-section">
@@ -433,6 +434,8 @@ document.getElementById('sidebar-escritorio').textContent = nomeEscritorio || 'E
 if (isAdmin) {
     const navAdmin = document.getElementById('nav-admin');
     if (navAdmin) navAdmin.style.display = '';
+    const navAdminCadastros = document.getElementById('nav-admin-cadastros');
+    if (navAdminCadastros) navAdminCadastros.style.display = '';
 }
 
 function toggleSidebar() {
