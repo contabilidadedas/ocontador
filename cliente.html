@@ -77,7 +77,7 @@
                 const dados = await resposta.json();
                 if (!resposta.ok) throw new Error(dados.erro || 'Erro ao fazer login como cliente.');
 
-                // Salva no formato padronizado que o dashboard.html espera
+                // Salva no formato padronizado que o painel-cliente.html espera
                 localStorage.setItem('token', dados.token);
                 localStorage.setItem('empresa', JSON.stringify({
                     cnpj: cnpj,
@@ -85,7 +85,7 @@
                     primeiroAcesso: dados.primeiroAcesso
                 }));
 
-                window.location.href = 'dashboard.html';
+                window.location.href = 'painel-cliente.html';
             } catch (erro) {
                 mostrarAlerta(erro.message, 'erro');
             }
