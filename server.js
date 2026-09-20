@@ -258,6 +258,18 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS inadimplente BOOLEAN DEFAULT FALSE;`);
         await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pendente';`);
 
+        // Tabela de configurações do sistema (valor mensal por contador, etc.)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS config_sistema (
+                id SERIAL PRIMARY KEY,
+                chave VARCHAR(100) UNIQUE NOT NULL,
+                valor TEXT,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        // Valor padrão: R$ 99 por contador ativo por mês
+        await pool.query(`INSERT INTO config_sistema (chave, valor) VALUES ('valor_mensal_contador', '99') ON CONFLICT (chave) DO NOTHING;`);
+
         // Garante colunas extras no CRM
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS origem VARCHAR(50);`);
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS servico_interesse VARCHAR(100);`);
@@ -400,6 +412,35 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 // 1b. ROTAS DE ADMINISTRAÇÃO (Gerenciar Acessos)
 // ==========================================
+// Dashboard de vendas do admin (total de contadores + ganho mensal)
+app.get('/api/admin/vendas', verificarAdmin, async (req, res) => {
+    try {
+        const totalContadores = await pool.query('SELECT COUNT(*) as total FROM contadores');
+        const contadoresAtivos = await pool.query('SELECT COUNT(*) as total FROM contadores WHERE ativo != FALSE');
+        const configResult = await pool.query("SELECT valor FROM config_sistema WHERE chave = 'valor_mensal_contador'");
+        const valorMensal = parseFloat(configResult.rows[0]?.valor || '99');
+        const totalVendas = parseInt(totalContadores.rows[0].total);
+        const ativos = parseInt(contadoresAtivos.rows[0].total);
+        const ganhoMensal = ativos * valorMensal;
+        res.json({ totalVendas, contadoresAtivos: ativos, valorMensal, ganhoMensal });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar vendas: ' + erro.message });
+    }
+});
+
+// Atualizar valor mensal por contador
+app.put('/api/admin/config', verificarAdmin, async (req, res) => {
+    try {
+        const { valorMensal } = req.body;
+        if (valorMensal == null || isNaN(parseFloat(valorMensal))) return res.status(400).json({ erro: 'Valor mensal inválido.' });
+        await pool.query("INSERT INTO config_sistema (chave, valor) VALUES ('valor_mensal_contador', $1) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor", [String(parseFloat(valorMensal))]);
+        await registrarAuditoria(req.contadorId, 'contador', `Alterou valor mensal por contador para R$ ${parseFloat(valorMensal)}`, req);
+        res.json({ mensagem: 'Valor atualizado com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar config: ' + erro.message });
+    }
+});
+
 app.get('/api/admin/contadores', verificarAdmin, async (req, res) => {
     try {
         const resultado = await pool.query(
