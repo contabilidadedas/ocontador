@@ -252,7 +252,7 @@ async function trocarSenha(e) {
     if (s1 !== s2) { alerta.textContent = 'As senhas não coincidem.'; alerta.className = 'alert show alert-error'; return; }
     if (s1.length < 6) { alerta.textContent = 'Mínimo 6 caracteres.'; alerta.className = 'alert show alert-error'; return; }
     try {
-        await fetch('/api/cliente/alterar-senha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ novaSenha: s1, cnpj: empresa.cnpj }) });
+        await fetch('/api/cliente/alterar-senha', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ novaSenha: s1 }) });
         empresa.primeiroAcesso = false;
         localStorage.setItem('empresa', JSON.stringify(empresa));
         document.getElementById('modal-senha').style.display = 'none';
@@ -438,7 +438,7 @@ clientViews.guias = async function() {
                 <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
                 <td>
                     ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix}')">PIX</button>` : ''}
-                    ${g.arquivonome ? `<a href="/api/guias/download/${g.id}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">PDF</a>` : ''}
+                    ${g.arquivonome ? `<a href="/api/guias/download/${g.id}?token=${token}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">PDF</a>` : ''}
                 </td>
             </tr>`).join('');
     }

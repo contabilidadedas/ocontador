@@ -753,7 +753,7 @@ views['docs-recebidos'] = async function() {
                 <td>${d.descricao || '—'}</td>
                 <td class="text-secondary">${d.enviado_por || '—'}</td>
                 <td class="text-secondary">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
-                <td>${d.arquivonome ? `<a href="/api/documentos/download/${d.id}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a>` : '—'}</td>
+                <td>${d.arquivonome ? `<a href="/api/documentos/download/${d.id}?token=${token}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a>` : '—'}</td>
                 <td><button class="btn-sm btn-sm-red" onclick="deletarDocumento(${d.id})">Excluir</button></td>
             </tr>`).join('');
     } catch (e) { document.getElementById('docs-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
@@ -813,7 +813,7 @@ views['notas-fiscais'] = async function() {
                 <td>R$ ${Number(n.valor||0).toFixed(2)}</td>
                 <td><span class="badge badge-${n.status==='recebida'?'green':'grey'}">${(n.status||'recebida').toUpperCase()}</span></td>
                 <td class="text-secondary">${new Date(n.datacriacao).toLocaleDateString('pt-BR')}</td>
-                <td>${n.arquivonome ? `<a href="/api/notas-fiscais/download/${n.id}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a> ` : ''}<button class="btn-sm btn-sm-red" onclick="deletarNF(${n.id})">Excluir</button></td>
+                <td>${n.arquivonome ? `<a href="/api/notas-fiscais/download/${n.id}?token=${token}" target="_blank" class="btn-sm btn-sm-blue">Baixar</a> ` : ''}<button class="btn-sm btn-sm-red" onclick="deletarNF(${n.id})">Excluir</button></td>
             </tr>`).join('');
     } catch (e) { document.getElementById('nf-tbody').innerHTML = emptyRow(7, 'Erro ao carregar.'); }
 };
@@ -843,7 +843,7 @@ views.guias = async function() {
                 <td>R$ ${Number(g.valor||0).toFixed(2)}</td>
                 <td class="text-secondary">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
                 <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
-                <td>${g.arquivonome ? `<a href="/api/guias/download/${g.id}" target="_blank" class="btn-sm btn-sm-blue">PDF</a>` : '—'}</td>
+                <td>${g.arquivonome ? `<a href="/api/guias/download/${g.id}?token=${token}" target="_blank" class="btn-sm btn-sm-blue">PDF</a>` : '—'}</td>
                 <td><button class="btn-sm btn-sm-red" onclick="deletarGuia(${g.id})">Excluir</button></td>
             </tr>`).join('');
     } catch (e) { document.getElementById('guias-tbody').innerHTML = emptyRow(8, 'Erro ao carregar.'); }
