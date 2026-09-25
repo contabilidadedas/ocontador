@@ -302,6 +302,7 @@ function verificarTokenContador(req, res, next) {
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.tipo !== 'contador') return res.status(403).json({ erro: 'Acesso restrito ao painel do contador.' });
         req.contadorId = decoded.id;
         next();
     } catch (err) {
@@ -315,12 +316,43 @@ function verificarTokenCliente(req, res, next) {
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.tipo !== 'cliente') return res.status(403).json({ erro: 'Acesso restrito ao portal do cliente.' });
         req.empresaId = decoded.id;
         req.empresaCnpj = decoded.cnpj;
         next();
     } catch (err) {
         return res.status(401).json({ erro: 'Token inválido ou expirado.' });
     }
+}
+
+// Middleware para downloads (links <a href>): aceita token no header OU na query ?token=
+function verificarTokenDownload(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    let token = authHeader ? authHeader.split(' ')[1] : null;
+    if (!token && req.query.token) token = req.query.token;
+    if (!token) return res.status(401).json({ erro: 'Token não fornecido.' });
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.tipo === 'contador') {
+            req.contadorId = decoded.id;
+            req.tokenTipo = 'contador';
+        } else if (decoded.tipo === 'cliente') {
+            req.empresaId = decoded.id;
+            req.empresaCnpj = decoded.cnpj;
+            req.tokenTipo = 'cliente';
+        } else {
+            return res.status(403).json({ erro: 'Tipo de token inválido.' });
+        }
+        next();
+    } catch (err) {
+        return res.status(401).json({ erro: 'Token inválido ou expirado.' });
+    }
+}
+
+// Helper: verifica se uma empresa pertence ao contador logado
+async function empresaPertenceContador(empresaId, contadorId) {
+    const r = await pool.query('SELECT 1 FROM empresas WHERE id = $1 AND (contador_id = $2 OR contadorid = $2)', [empresaId, contadorId]);
+    return r.rows.length > 0;
 }
 
 // ==========================================
@@ -387,7 +419,7 @@ app.post('/api/contador/login', async (req, res) => {
         if (contador.ativo === false) return res.status(403).json({ erro: 'Conta desativada. Contate o administrador.' });
         const senhaValida = await bcrypt.compare(senha, contador.senhahash || contador.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'E-mail ou senha incorretos.' });
-        const token = jwt.sign({ id: contador.id, email: contador.email, isAdmin: contador.is_admin || false }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: contador.id, email: contador.email, isAdmin: contador.is_admin || false, tipo: 'contador' }, JWT_SECRET, { expiresIn: '7d' });
         await registrarAuditoria(contador.id, 'contador', 'Login no painel', req);
         res.json({ mensagem: 'Login realizado!', token, nomeEscritorio: contador.nomeescritorio || 'Escritório', contadorId: contador.id, isAdmin: contador.is_admin || false });
     } catch (erro) {
@@ -401,6 +433,7 @@ function verificarAdmin(req, res, next) {
     if (!authHeader) return res.status(401).json({ erro: 'Token não fornecido.' });
     try {
         const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+        if (decoded.tipo !== 'contador') return res.status(403).json({ erro: 'Acesso restrito ao administrador.' });
         req.contadorId = decoded.id;
         if (!decoded.isAdmin) return res.status(403).json({ erro: 'Acesso restrito ao administrador.' });
         next();
@@ -524,7 +557,7 @@ app.post('/api/cliente/login', async (req, res) => {
         const empresa = resultado.rows[0];
         const senhaValida = await bcrypt.compare(senha, empresa.senhahash || empresa.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'CNPJ ou senha incorretos.' });
-        const token = jwt.sign({ id: empresa.id, cnpj: empresa.cnpj }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: empresa.id, cnpj: empresa.cnpj, tipo: 'cliente' }, JWT_SECRET, { expiresIn: '7d' });
         await registrarAuditoria(empresa.id, 'cliente', 'Login do cliente', req);
         res.json({ mensagem: 'Login realizado!', token, razaoSocial: empresa.razaosocial, primeiroAcesso: empresa.primeiro_acesso, empresaId: empresa.id });
     } catch (erro) {
@@ -532,13 +565,13 @@ app.post('/api/cliente/login', async (req, res) => {
     }
 });
 
-app.post('/api/cliente/alterar-senha', async (req, res) => {
+app.post('/api/cliente/alterar-senha', verificarTokenCliente, async (req, res) => {
     try {
-        let { cnpj, novaSenha } = req.body;
-        if (!cnpj || !novaSenha) return res.status(400).json({ erro: 'CNPJ e nova senha são obrigatórios.' });
-        const cnpjLimpo = cnpj.replace(/\D/g, '');
+        const { novaSenha } = req.body;
+        if (!novaSenha) return res.status(400).json({ erro: 'Nova senha é obrigatória.' });
         const senhaHash = await bcrypt.hash(novaSenha, await bcrypt.genSalt(10));
-        await pool.query('UPDATE empresas SET senhahash = $1, senha = $1, primeiro_acesso = FALSE WHERE cnpj = $2', [senhaHash, cnpjLimpo]);
+        await pool.query('UPDATE empresas SET senhahash = $1, senha = $1, primeiro_acesso = FALSE WHERE id = $2', [senhaHash, req.empresaId]);
+        await registrarAuditoria(req.empresaId, 'cliente', 'Alterou sua senha', req);
         res.json({ mensagem: 'Senha alterada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao alterar senha: ' + erro.message });
@@ -629,9 +662,16 @@ app.post('/api/guias', verificarTokenContador, upload.single('arquivo'), async (
     }
 });
 
-app.get('/api/guias/:cnpj', async (req, res) => {
+app.get('/api/guias/:cnpj', verificarTokenDownload, async (req, res) => {
     try {
         const cnpjLimpo = req.params.cnpj.replace(/\D/g, '');
+        // Contador só pode ver guias de suas empresas; cliente só pode ver as suas
+        if (req.tokenTipo === 'contador') {
+            const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [cnpjLimpo, req.contadorId]);
+            if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        } else if (req.tokenTipo === 'cliente' && cnpjLimpo !== req.empresaCnpj) {
+            return res.status(403).json({ erro: 'Você não tem acesso a estas guias.' });
+        }
         const guias = await pool.query(
             'SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivotipo, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC',
             [cnpjLimpo]
@@ -662,6 +702,11 @@ app.put('/api/guias/:id/status', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
+        // Verifica se a guia pertence a uma empresa do contador
+        const guia = await pool.query('SELECT g.cnpj FROM guias g WHERE g.id = $1', [id]);
+        if (guia.rows.length === 0) return res.status(404).json({ erro: 'Guia não encontrada.' });
+        const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.rows[0].cnpj, req.contadorId]);
+        if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Você não tem acesso a esta guia.' });
         await pool.query('UPDATE guias SET status = $1 WHERE id = $2', [status, id]);
         res.json({ mensagem: 'Status atualizado.' });
     } catch (erro) {
@@ -671,6 +716,10 @@ app.put('/api/guias/:id/status', verificarTokenContador, async (req, res) => {
 
 app.delete('/api/guias/:id', verificarTokenContador, async (req, res) => {
     try {
+        const guia = await pool.query('SELECT g.cnpj FROM guias g WHERE g.id = $1', [req.params.id]);
+        if (guia.rows.length === 0) return res.status(404).json({ erro: 'Guia não encontrada.' });
+        const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.rows[0].cnpj, req.contadorId]);
+        if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Você não tem acesso a esta guia.' });
         await pool.query('DELETE FROM guias WHERE id = $1', [req.params.id]);
         await registrarAuditoria(req.contadorId, 'contador', `Excluiu guia ID: ${req.params.id}`, req);
         res.json({ mensagem: 'Guia excluída.' });
@@ -679,12 +728,19 @@ app.delete('/api/guias/:id', verificarTokenContador, async (req, res) => {
     }
 });
 
-app.get('/api/guias/download/:id', async (req, res) => {
+app.get('/api/guias/download/:id', verificarTokenDownload, async (req, res) => {
     try {
         const { id } = req.params;
-        const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM guias WHERE id = $1', [id]);
+        const resultado = await pool.query('SELECT cnpj, arquivonome, arquivodados, arquivotipo FROM guias WHERE id = $1', [id]);
         if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const guia = resultado.rows[0];
+        // Verifica propriedade
+        if (req.tokenTipo === 'contador') {
+            const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.cnpj, req.contadorId]);
+            if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Acesso negado.' });
+        } else if (req.tokenTipo === 'cliente' && guia.cnpj !== req.empresaCnpj) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        }
         res.setHeader('Content-Type', guia.arquivotipo || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${guia.arquivonome || 'guia.pdf'}"`);
         res.send(guia.arquivodados);
@@ -838,12 +894,18 @@ app.get('/api/documentos/cliente', verificarTokenCliente, async (req, res) => {
     }
 });
 
-app.get('/api/documentos/download/:id', async (req, res) => {
+app.get('/api/documentos/download/:id', verificarTokenDownload, async (req, res) => {
     try {
         const { id } = req.params;
-        const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM documentos WHERE id = $1', [id]);
+        const resultado = await pool.query('SELECT empresa_id, contador_id, arquivonome, arquivodados, arquivotipo FROM documentos WHERE id = $1', [id]);
         if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const doc = resultado.rows[0];
+        // Verifica propriedade
+        if (req.tokenTipo === 'contador' && doc.contador_id !== req.contadorId) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        } else if (req.tokenTipo === 'cliente' && doc.empresa_id !== req.empresaId) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        }
         res.setHeader('Content-Type', doc.arquivotipo || 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${doc.arquivonome}"`);
         res.send(doc.arquivodados);
@@ -875,7 +937,12 @@ app.delete('/api/documentos/:id', verificarTokenContador, async (req, res) => {
 
 app.delete('/api/documentos/cliente/:id', verificarTokenCliente, async (req, res) => {
     try {
-        await pool.query('DELETE FROM documentos WHERE id = $1 AND empresa_id = $2', [req.params.id, req.empresaId]);
+        // Cliente só pode excluir documentos que ele mesmo enviou
+        const resultado = await pool.query(
+            'DELETE FROM documentos WHERE id = $1 AND empresa_id = $2 AND enviado_por = $3 RETURNING id',
+            [req.params.id, req.empresaId, 'cliente']
+        );
+        if (resultado.rows.length === 0) return res.status(403).json({ erro: 'Você só pode excluir documentos enviados por você.' });
         res.json({ mensagem: 'Documento excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -950,6 +1017,9 @@ app.get('/api/pendencias/cliente', verificarTokenCliente, async (req, res) => {
 // ==========================================
 app.get('/api/checklist/:empresaId', verificarTokenContador, async (req, res) => {
     try {
+        if (!await empresaPertenceContador(req.params.empresaId, req.contadorId)) {
+            return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        }
         const resultado = await pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [req.params.empresaId]);
         res.json(resultado.rows);
     } catch (erro) {
@@ -973,6 +1043,11 @@ app.post('/api/checklist', verificarTokenContador, async (req, res) => {
 app.put('/api/checklist/:id', verificarTokenContador, async (req, res) => {
     try {
         const { status } = req.body;
+        const item = await pool.query('SELECT empresa_id FROM checklist_mensal WHERE id = $1', [req.params.id]);
+        if (item.rows.length === 0) return res.status(404).json({ erro: 'Item não encontrado.' });
+        if (!await empresaPertenceContador(item.rows[0].empresa_id, req.contadorId)) {
+            return res.status(403).json({ erro: 'Você não tem acesso a este item.' });
+        }
         await pool.query('UPDATE checklist_mensal SET status = $1 WHERE id = $2', [status, req.params.id]);
         res.json({ mensagem: 'Status atualizado!' });
     } catch (erro) {
@@ -980,9 +1055,13 @@ app.put('/api/checklist/:id', verificarTokenContador, async (req, res) => {
     }
 });
 
-app.get('/api/checklist/cliente/:empresaId', async (req, res) => {
+app.get('/api/checklist/cliente/:empresaId', verificarTokenCliente, async (req, res) => {
     try {
-        const resultado = await pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [req.params.empresaId]);
+        // Cliente só pode ver seu próprio checklist (usa ID do token, ignora parâmetro da URL)
+        if (parseInt(req.params.empresaId) !== req.empresaId) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        }
+        const resultado = await pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [req.empresaId]);
         res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1059,6 +1138,9 @@ app.post('/api/chat/cliente', verificarTokenCliente, async (req, res) => {
 
 app.get('/api/chat/:empresaId', verificarTokenContador, async (req, res) => {
     try {
+        if (!await empresaPertenceContador(req.params.empresaId, req.contadorId)) {
+            return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        }
         const resultado = await pool.query(
             'SELECT * FROM chat_mensagens WHERE empresa_id = $1 ORDER BY datacriacao ASC', [req.params.empresaId]
         );
@@ -1071,6 +1153,10 @@ app.get('/api/chat/:empresaId', verificarTokenContador, async (req, res) => {
 app.post('/api/chat', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, mensagem } = req.body;
+        if (!empresa_id) return res.status(400).json({ erro: 'empresa_id é obrigatório.' });
+        if (!await empresaPertenceContador(empresa_id, req.contadorId)) {
+            return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        }
         await pool.query(
             'INSERT INTO chat_mensagens (contador_id, empresa_id, remetente, mensagem, lido, datacriacao) VALUES ($1, $2, $3, $4, FALSE, NOW())',
             [req.contadorId, empresa_id, 'contador', mensagem]
@@ -1213,12 +1299,18 @@ app.post('/api/notas-fiscais', verificarTokenContador, upload.single('arquivo'),
     }
 });
 
-app.get('/api/notas-fiscais/download/:id', async (req, res) => {
+app.get('/api/notas-fiscais/download/:id', verificarTokenDownload, async (req, res) => {
     try {
         const { id } = req.params;
-        const resultado = await pool.query('SELECT arquivonome, arquivodados, arquivotipo FROM notas_fiscais WHERE id = $1', [id]);
+        const resultado = await pool.query('SELECT empresa_id, contador_id, arquivonome, arquivodados, arquivotipo FROM notas_fiscais WHERE id = $1', [id]);
         if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const nf = resultado.rows[0];
+        // Verifica propriedade
+        if (req.tokenTipo === 'contador' && nf.contador_id !== req.contadorId) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        } else if (req.tokenTipo === 'cliente' && nf.empresa_id !== req.empresaId) {
+            return res.status(403).json({ erro: 'Acesso negado.' });
+        }
         res.setHeader('Content-Type', nf.arquivotipo || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${nf.arquivonome || 'nota.pdf'}"`);
         res.send(nf.arquivodados);

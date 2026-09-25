@@ -152,7 +152,7 @@
         async function carregarGuiasExistentes() {
             const corpo = document.getElementById('lista-guias-corpo');
             try {
-                const resposta = await fetch(`/api/guias/${cnpjEmpresa}`);
+                const resposta = await fetch(`/api/guias/${cnpjEmpresa}?token=${token}`);
                 if (!resposta.ok) throw new Error('Erro ao buscar guias.');
                 const guias = await resposta.json();
 

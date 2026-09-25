@@ -521,8 +521,8 @@
             try {
                 const response = await fetch('/api/cliente/alterar-senha', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ novaSenha, cnpj: empresa.cnpj })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ novaSenha })
                 });
 
                 const resultado = await response.json();
@@ -557,7 +557,7 @@
 
         async function carregarImpostos() {
             try {
-                const response = await fetch(`/api/guias/${empresa.cnpj}`, {
+                const response = await fetch(`/api/guias/${empresa.cnpj}?token=${token}`, {
                     method: 'GET'
                 });
 
@@ -596,7 +596,7 @@
                         <td>
                             <div class="action-buttons">
                                 ${item.pix ? `<button class="btn-action btn-pix" onclick="copiarPix('${item.pix}')"><i data-lucide="qr-code" style="width:14px;"></i> Copiar PIX</button>` : ''}
-                                ${item.arquivonome ? `<a href="/api/guias/download/${item.id}" target="_blank" class="btn-action btn-pdf"><i data-lucide="download" style="width:14px;"></i> PDF</a>` : ''}
+                                ${item.arquivonome ? `<a href="/api/guias/download/${item.id}?token=${token}" target="_blank" class="btn-action btn-pdf"><i data-lucide="download" style="width:14px;"></i> PDF</a>` : ''}
                             </div>
                         </td>
                     `;
