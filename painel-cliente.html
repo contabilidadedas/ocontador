@@ -275,6 +275,10 @@ clientViews.inicio = async function() {
         <div class="card">
             <h3>✅ Checklist Mensal</h3>
             <div id="inicio-checklist"></div>
+        </div>
+        <div class="card" id="inicio-avisos-card" style="display:none;">
+            <h3>🔔 Avisos do Contador</h3>
+            <div id="inicio-avisos"></div>
         </div>`;
     try {
         const data = await api('/api/cliente/dashboard');
@@ -300,6 +304,19 @@ clientViews.inicio = async function() {
                     <div class="check-dot ${c.status}"></div>
                     <span class="check-item-name">${c.item}</span>
                     <span class="check-item-status" style="color:${c.status==='recebido'||c.status==='disponivel'||c.status==='calculado'?'#4ade80':c.status==='pendente'?'#f87171':'#fbbf24'};">${c.status.toUpperCase()}</span>
+                </div>`).join('');
+        }
+        // Avisos
+        if (data.avisos && data.avisos.length > 0) {
+            document.getElementById('inicio-avisos-card').style.display = 'block';
+            document.getElementById('inicio-avisos').innerHTML = data.avisos.map(a => `
+                <div class="checklist-item" style="flex-wrap:wrap;">
+                    <div class="check-dot ${a.tipo==='urgente'?'pendente':a.tipo==='atencao'?'aguardando':'recebido'}"></div>
+                    <div style="flex:1;">
+                        <div style="font-weight:600;font-size:14px;">${a.titulo || 'Aviso'}</div>
+                        <div style="font-size:13px;color:var(--text-secondary);margin-top:2px;">${a.mensagem || ''}</div>
+                    </div>
+                    <span style="color:var(--text-muted);font-size:12px;">${new Date(a.datacriacao).toLocaleDateString('pt-BR')}</span>
                 </div>`).join('');
         }
     } catch (e) {
@@ -346,25 +363,32 @@ clientViews.documentos = async function() {
             </div>
         </div>
         <div class="card">
-            <h3>📄 Documentos Enviados</h3>
+            <h3>📄 Meus Documentos</h3>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Categoria</th><th>Descrição</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Categoria</th><th>Descrição</th><th>Enviado por</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
                 <tbody id="docs-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const data = await api('/api/cliente/dashboard');
         const tb = document.getElementById('docs-tbody');
-        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento enviado.</td></tr>'; return; }
-        tb.innerHTML = data.documentos.map(d => `
+        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento.</td></tr>'; return; }
+        tb.innerHTML = data.documentos.map(d => {
+            const isCliente = d.enviado_por === 'cliente';
+            return `
             <tr>
                 <td><span class="badge badge-purple">${d.categoria || '—'}</span></td>
                 <td>${d.descricao || '—'}</td>
+                <td><span class="badge ${isCliente?'badge-green':'badge-grey'}">${isCliente?'Você':'Contador'}</span></td>
                 <td><span class="badge badge-${d.status==='recebido'?'green':'grey'}">${(d.status||'pendente').toUpperCase()}</span></td>
                 <td style="color:var(--text-secondary);">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
-                <td><button class="btn-sm" style="background:rgba(220,38,38,0.15);color:#f87171;" onclick="deletarDocCliente(${d.id})">Excluir</button></td>
-            </tr>`).join('');
-    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">Erro.</td></tr>'; }
+                <td style="display:flex;gap:6px;">
+                    ${d.arquivonome ? `<a href="/api/documentos/download/${d.id}?token=${token}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">Baixar</a>` : ''}
+                    ${isCliente ? `<button class="btn-sm" style="background:rgba(220,38,38,0.15);color:#f87171;" onclick="deletarDocCliente(${d.id})">Excluir</button>` : ''}
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="6" style="color:var(--text-muted);">Erro.</td></tr>'; }
     lucide.createIcons();
 };
 

@@ -937,7 +937,12 @@ app.delete('/api/documentos/:id', verificarTokenContador, async (req, res) => {
 
 app.delete('/api/documentos/cliente/:id', verificarTokenCliente, async (req, res) => {
     try {
-        await pool.query('DELETE FROM documentos WHERE id = $1 AND empresa_id = $2', [req.params.id, req.empresaId]);
+        // Cliente só pode excluir documentos que ele mesmo enviou
+        const resultado = await pool.query(
+            'DELETE FROM documentos WHERE id = $1 AND empresa_id = $2 AND enviado_por = $3 RETURNING id',
+            [req.params.id, req.empresaId, 'cliente']
+        );
+        if (resultado.rows.length === 0) return res.status(403).json({ erro: 'Você só pode excluir documentos enviados por você.' });
         res.json({ mensagem: 'Documento excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
