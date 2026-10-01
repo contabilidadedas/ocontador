@@ -14,7 +14,7 @@ app.use(express.static(__dirname));
 
 // Configuração do Banco de Dados PostgreSQL
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://contabil_m9rq_user:rrmF4JhFt46yzAqboawmWJWrRaT0QUZQ@dpg-danue0bm8hqs73cjr6pg-a/contabil_m9rq',
+    connectionString: process.env.DATABASE_URL || 'postgresql://parlatore_user:2lfi2xUAvbGHiRYIBT7FhuFKggkD6VyS@dpg-dav6ph8473hc73dsdm2g-a/parlatore',
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false }
 });
 
