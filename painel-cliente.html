@@ -448,7 +448,7 @@ clientViews.guias = async function() {
         </div>
         <div class="card" style="padding:0;overflow:hidden;">
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Descrição</th><th>Ações</th></tr></thead>
                 <tbody id="guias-tbody"></tbody>
             </table></div>
         </div>`;
@@ -464,20 +464,48 @@ clientViews.guias = async function() {
     function renderGuias(filtro) {
         const tb = document.getElementById('guias-tbody');
         const filtered = filtro ? allGuias.filter(g => g.tipoimposto === filtro) : allGuias;
-        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma guia encontrada.</td></tr>'; return; }
-        tb.innerHTML = filtered.map(g => `
+        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma guia encontrada.</td></tr>'; return; }
+        const statusBadge = {
+            'publicada': 'badge-blue', 'visualizada': 'badge-orange',
+            'baixada': 'badge-orange', 'paga': 'badge-green', 'vencida': 'badge-urgente',
+            'pendente': 'badge-orange', 'pago': 'badge-green'
+        };
+        const statusLabel = {
+            'publicada': 'PUBLICADA', 'visualizada': 'VISUALIZADA',
+            'baixada': 'BAIXADA', 'paga': 'PAGA', 'vencida': 'VENCIDA',
+            'pendente': 'PENDENTE', 'pago': 'PAGO'
+        };
+        tb.innerHTML = filtered.map(g => {
+            const st = g.status || 'pendente';
+            return `
             <tr>
                 <td style="font-weight:600;">${g.tipoimposto || '—'}</td>
                 <td>${g.competencia || '—'}</td>
                 <td style="color:var(--text-secondary);">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
                 <td style="font-weight:600;">R$ ${Number(g.valor||0).toFixed(2)}</td>
-                <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
+                <td><span class="badge ${statusBadge[st] || 'badge-orange'}">${statusLabel[st] || st.toUpperCase()}</span></td>
+                <td style="font-size:12px;color:var(--text-secondary);">${g.descricao || '—'}${g.observacao ? `<br><span style="color:var(--text-muted);">Obs: ${g.observacao}</span>` : ''}</td>
                 <td>
-                    ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix}')">PIX</button>` : ''}
+                    ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix.replace(/'/g, "\\'")}')">PIX</button>` : ''}
                     ${g.arquivonome ? `<a href="/api/guias/download/${g.id}?token=${token}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">PDF</a>` : ''}
+                    <button class="btn-sm btn-sm-purple" onclick="verHistoricoGuiaCliente(${g.id})">Histórico</button>
                 </td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
     }
+    window.verHistoricoGuiaCliente = async function(id) {
+        try {
+            const hist = await api(`/api/cliente/guias/${id}/historico`);
+            const items = hist.map(h => `<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div style="font-weight:600;font-size:13px;">${h.acao}</div><div style="font-size:12px;color:var(--text-secondary);">${h.detalhe || ''}</div><div style="font-size:11px;color:var(--text-muted);">${new Date(h.data).toLocaleString('pt-BR')}</div></div>`).join('');
+            document.getElementById('content').insertAdjacentHTML('beforeend', `
+                <div class="modal-overlay active" id="modal-hist-guia-cli" onclick="if(event.target===this)this.remove()">
+                    <div class="modal-card" style="max-width:500px;">
+                        <div class="modal-header"><h3>Histórico da Guia</h3><button class="modal-close" onclick="document.getElementById('modal-hist-guia-cli').remove()">&times;</button></div>
+                        <div style="max-height:400px;overflow-y:auto;">${items || '<div style="padding:20px;text-align:center;color:var(--text-muted);">Sem histórico disponível.</div>'}</div>
+                    </div>
+                </div>`);
+        } catch (e) { alert(e.message); }
+    };
     renderGuias('');
 };
 

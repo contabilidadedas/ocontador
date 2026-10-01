@@ -369,8 +369,16 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label>Descrição</label>
+                    <input type="text" id="guia-descricao" placeholder="Descrição da guia...">
+                </div>
+                <div class="form-group">
                     <label>PIX (opcional)</label>
                     <textarea id="guia-pix" rows="2" placeholder="Código PIX..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Observações</label>
+                    <textarea id="guia-observacao" rows="2" placeholder="Observações internas..."></textarea>
                 </div>
                 <div class="form-group">
                     <label>Arquivo PDF (opcional)</label>
@@ -378,7 +386,7 @@
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
                     <button type="button" class="btn-cancel" onclick="fecharModal('modal-guia')">Cancelar</button>
-                    <button type="submit" class="btn-submit">Enviar Guia</button>
+                    <button type="submit" class="btn-submit">Salvar como Rascunho</button>
                 </div>
             </form>
         </div>
@@ -948,7 +956,7 @@ views['notas-fiscais'] = async function() {
 views.guias = async function() {
     await carregarEmpresasCache();
     document.getElementById('content').innerHTML = `
-        <h1 class="page-title">Impostos e Guias</h1>
+        <h1 class="page-title">Central de Guias</h1>
         <p class="page-subtitle">Gerencie as guias de impostos dos clientes</p>
         <div class="table-card">
             <div class="table-header"><div><h3>Guias Cadastradas</h3></div><button class="btn-sm btn-sm-blue" onclick="abrirModalGuia()">+ Nova Guia</button></div>
@@ -961,18 +969,69 @@ views.guias = async function() {
         const guias = await api('/api/guias');
         const tb = document.getElementById('guias-tbody');
         if (guias.length === 0) { tb.innerHTML = emptyRow(8, 'Nenhuma guia cadastrada.'); return; }
-        tb.innerHTML = guias.map(g => `
+        const statusBadge = {
+            'rascunho': 'badge-gray', 'publicada': 'badge-blue', 'visualizada': 'badge-orange',
+            'baixada': 'badge-orange', 'paga': 'badge-green', 'vencida': 'badge-urgente',
+            'cancelada': 'badge-urgente', 'pendente': 'badge-orange', 'pago': 'badge-green'
+        };
+        const statusLabel = {
+            'rascunho': 'RASCUNHO', 'publicada': 'PUBLICADA', 'visualizada': 'VISUALIZADA',
+            'baixada': 'BAIXADA', 'paga': 'PAGA', 'vencida': 'VENCIDA',
+            'cancelada': 'CANCELADA', 'pendente': 'PENDENTE', 'pago': 'PAGO'
+        };
+        tb.innerHTML = guias.map(g => {
+            const st = g.status || 'pendente';
+            const isRascunho = st === 'rascunho' || st === 'pendente';
+            const isCancelada = st === 'cancelada';
+            const isPaga = st === 'paga' || st === 'pago';
+            let acoes = '';
+            if (isRascunho) acoes += `<button class="btn-sm btn-sm-green" onclick="publicarGuia(${g.id})" title="Publicar para o cliente">Publicar</button>`;
+            if (!isPaga && !isCancelada) acoes += `<button class="btn-sm btn-sm-green" onclick="marcarGuiaPaga(${g.id})" title="Marcar como paga">Paga</button>`;
+            if (!isCancelada && !isPaga) acoes += `<button class="btn-sm btn-sm-red" onclick="cancelarGuia(${g.id})" title="Cancelar guia">Cancelar</button>`;
+            acoes += `<button class="btn-sm btn-sm-blue" onclick="verHistoricoGuia(${g.id})" title="Ver histórico">Histórico</button>`;
+            acoes += `<button class="btn-sm btn-sm-red" onclick="deletarGuia(${g.id})" title="Excluir">Excluir</button>`;
+            return `
             <tr>
                 <td>${g.razaosocial || '—'}</td>
                 <td><span class="badge badge-blue">${g.tipoimposto || '—'}</span></td>
                 <td>${g.competencia || '—'}</td>
                 <td>R$ ${Number(g.valor||0).toFixed(2)}</td>
                 <td class="text-secondary">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
-                <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
+                <td><span class="badge ${statusBadge[st] || 'badge-orange'}">${statusLabel[st] || st.toUpperCase()}</span>${g.versao > 1 ? ` <span style="font-size:11px;color:var(--text-muted);">v${g.versao}</span>` : ''}</td>
                 <td>${g.arquivonome ? `<a href="/api/guias/download/${g.id}?token=${token}" target="_blank" class="btn-sm btn-sm-blue">PDF</a>` : '—'}</td>
-                <td><button class="btn-sm btn-sm-red" onclick="deletarGuia(${g.id})">Excluir</button></td>
-            </tr>`).join('');
+                <td style="display:flex;gap:4px;flex-wrap:wrap;">${acoes}</td>
+            </tr>`;
+        }).join('');
     } catch (e) { document.getElementById('guias-tbody').innerHTML = emptyRow(8, 'Erro ao carregar.'); }
+};
+
+window.publicarGuia = async function(id) {
+    if (!confirm('Publicar esta guia para o portal do cliente?')) return;
+    try { const r = await api(`/api/guias/${id}/publicar`, { method: 'PUT' }); alert(r.mensagem); navigate('guias'); }
+    catch (e) { alert(e.message); }
+};
+window.marcarGuiaPaga = async function(id) {
+    if (!confirm('Marcar esta guia como paga?')) return;
+    try { const r = await api(`/api/guias/${id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'paga' }) }); alert(r.mensagem); navigate('guias'); }
+    catch (e) { alert(e.message); }
+};
+window.cancelarGuia = async function(id) {
+    if (!confirm('Cancelar esta guia? Esta ação não pode ser desfeita.')) return;
+    try { const r = await api(`/api/guias/${id}/cancelar`, { method: 'PUT' }); alert(r.mensagem); navigate('guias'); }
+    catch (e) { alert(e.message); }
+};
+window.verHistoricoGuia = async function(id) {
+    try {
+        const hist = await api(`/api/guias/${id}/historico`);
+        const items = hist.map(h => `<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div style="font-weight:600;font-size:13px;">${h.acao}</div><div style="font-size:12px;color:var(--text-secondary);">${h.detalhe || ''}</div><div style="font-size:11px;color:var(--text-muted);">${h.usuario_tipo || ''} • ${new Date(h.data).toLocaleString('pt-BR')}</div></div>`).join('');
+        document.getElementById('content').insertAdjacentHTML('beforeend', `
+            <div class="modal-overlay active" id="modal-historico-guia" onclick="if(event.target===this)this.remove()">
+                <div class="modal-card" style="max-width:500px;">
+                    <div class="modal-header"><h3>Histórico da Guia</h3><button class="modal-close" onclick="document.getElementById('modal-historico-guia').remove()">&times;</button></div>
+                    <div style="max-height:400px;overflow-y:auto;">${items || '<div style="padding:20px;text-align:center;color:var(--text-muted);">Sem histórico.</div>'}</div>
+                </div>
+            </div>`);
+    } catch (e) { alert(e.message); }
 };
 
 // --- FOLHA DE PAGAMENTO ---
@@ -1341,6 +1400,8 @@ async function cadastrarGuia(e) {
     fd.append('valor', document.getElementById('guia-valor').value.replace(/\./g,'').replace(',', '.'));
     fd.append('vencimento', document.getElementById('guia-venc').value);
     fd.append('pix', document.getElementById('guia-pix').value);
+    fd.append('descricao', document.getElementById('guia-descricao').value);
+    fd.append('observacao', document.getElementById('guia-observacao').value);
     const file = document.getElementById('guia-arquivo').files[0];
     if (file) fd.append('arquivo', file);
     try {

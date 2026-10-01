@@ -257,6 +257,24 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS primeiro_acesso BOOLEAN DEFAULT TRUE;`);
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS inadimplente BOOLEAN DEFAULT FALSE;`);
         await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pendente';`);
+        // Garante colunas extras na tabela de guias (Central de Guias)
+        await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS empresa_id INTEGER;`);
+        await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS descricao TEXT;`);
+        await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS observacao TEXT;`);
+        await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS versao INTEGER DEFAULT 1;`);
+
+        // Tabela de histórico de guias
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS guia_historico (
+                id SERIAL PRIMARY KEY,
+                guia_id INTEGER NOT NULL,
+                usuario_id INTEGER,
+                usuario_tipo VARCHAR(20),
+                acao VARCHAR(255),
+                detalhe TEXT,
+                data TIMESTAMP DEFAULT NOW()
+            );
+        `);
 
         // Garante colunas extras na tabela de documentos (Central de Documentos)
         await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(50);`);
@@ -319,6 +337,28 @@ async function registrarHistoricoDocumento(documentoId, usuarioId, usuarioTipo, 
     } catch (e) {
         console.error('Erro ao registrar histórico de documento:', e.message);
     }
+}
+
+// Helper: registra uma ação no histórico de uma guia
+async function registrarHistoricoGuia(guiaId, usuarioId, usuarioTipo, acao, detalhe) {
+    try {
+        await pool.query(
+            'INSERT INTO guia_historico (guia_id, usuario_id, usuario_tipo, acao, detalhe, data) VALUES ($1, $2, $3, $4, $5, NOW())',
+            [guiaId, usuarioId, usuarioTipo, acao, detalhe || null]
+        );
+    } catch (e) {
+        console.error('Erro ao registrar histórico de guia:', e.message);
+    }
+}
+
+// Helper: verifica se uma guia pertence a uma empresa do contador
+async function guiaPertenceContador(guiaId, contadorId) {
+    const r = await pool.query(`
+        SELECT g.* FROM guias g
+        JOIN empresas e ON g.cnpj = e.cnpj
+        WHERE g.id = $1 AND (e.contador_id = $2 OR e.contadorid = $2)
+    `, [guiaId, contadorId]);
+    return r.rows.length > 0 ? r.rows[0] : null;
 }
 
 // Configuração do Multer
@@ -678,16 +718,21 @@ app.put('/api/empresas/:id/inadimplente', verificarTokenContador, async (req, re
 // ==========================================
 app.post('/api/guias', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
     try {
-        const { cnpj, tipoimposto, competencia, valor, vencimento, pix } = req.body;
+        const { cnpj, tipoimposto, competencia, valor, vencimento, pix, empresa_id, descricao, observacao } = req.body;
         const cnpjLimpo = cnpj ? cnpj.replace(/\D/g, '') : '';
-        await pool.query(
-            `INSERT INTO guias (cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, arquivodados, arquivotipo, status, datacriacao) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pendente', NOW())`,
-            [cnpjLimpo, tipoimposto, competencia, valor || 0, vencimento || null, pix || '',
-             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
+        const statusInicial = 'rascunho';
+        const result = await pool.query(
+            `INSERT INTO guias (cnpj, empresa_id, tipoimposto, competencia, valor, vencimento, pix, descricao, observacao, arquivonome, arquivodados, arquivotipo, status, versao, datacriacao) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 1, NOW()) RETURNING id`,
+            [cnpjLimpo, empresa_id || null, tipoimposto, competencia, valor || 0, vencimento || null, pix || '',
+             descricao || '', observacao || '',
+             req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null,
+             statusInicial]
         );
+        const guiaId = result.rows[0].id;
+        await registrarHistoricoGuia(guiaId, req.contadorId, 'contador', 'Criação', `Guia ${tipoimposto} criada como rascunho`);
         await registrarAuditoria(req.contadorId, 'contador', `Cadastrou guia ${tipoimposto} para CNPJ ${cnpjLimpo}`, req);
-        res.status(201).json({ mensagem: 'Guia cadastrada com sucesso!' });
+        res.status(201).json({ mensagem: 'Guia criada como rascunho com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao salvar guia: ' + erro.message });
     }
@@ -715,14 +760,18 @@ app.get('/api/guias/:cnpj', verificarTokenDownload, async (req, res) => {
 
 app.get('/api/guias', verificarTokenContador, async (req, res) => {
     try {
-        const guias = await pool.query(
-            `SELECT g.*, e.razaosocial 
+        const { status, empresa_id, tipo } = req.query;
+        let query = `SELECT g.*, e.razaosocial 
              FROM guias g 
              JOIN empresas e ON g.cnpj = e.cnpj 
-             WHERE e.contador_id = $1 OR e.contadorid = $1 
-             ORDER BY g.datacriacao DESC`,
-            [req.contadorId]
-        );
+             WHERE e.contador_id = $1 OR e.contadorid = $1`;
+        const params = [req.contadorId];
+        let idx = 2;
+        if (status) { query += ` AND g.status = $${idx++}`; params.push(status); }
+        if (empresa_id) { query += ` AND g.empresa_id = $${idx++}`; params.push(empresa_id); }
+        if (tipo) { query += ` AND g.tipoimposto = $${idx++}`; params.push(tipo); }
+        query += ' ORDER BY g.datacriacao DESC';
+        const guias = await pool.query(query, params);
         res.json(guias.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao buscar guias: ' + erro.message });
@@ -733,15 +782,100 @@ app.put('/api/guias/:id/status', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        // Verifica se a guia pertence a uma empresa do contador
-        const guia = await pool.query('SELECT g.cnpj FROM guias g WHERE g.id = $1', [id]);
-        if (guia.rows.length === 0) return res.status(404).json({ erro: 'Guia não encontrada.' });
-        const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.rows[0].cnpj, req.contadorId]);
-        if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Você não tem acesso a esta guia.' });
+        const statusValidos = ['rascunho', 'publicada', 'visualizada', 'baixada', 'paga', 'vencida', 'cancelada', 'pendente', 'pago'];
+        if (!statusValidos.includes(status)) return res.status(400).json({ erro: 'Status inválido.' });
+        const guia = await guiaPertenceContador(id, req.contadorId);
+        if (!guia) return res.status(404).json({ erro: 'Guia não encontrada ou acesso negado.' });
+        const statusAnterior = guia.status;
         await pool.query('UPDATE guias SET status = $1 WHERE id = $2', [status, id]);
+        await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Status alterado', `De "${statusAnterior}" para "${status}"`);
         res.json({ mensagem: 'Status atualizado.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
+    }
+});
+
+// Publicar guia (rascunho → publicada)
+app.put('/api/guias/:id/publicar', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const guia = await guiaPertenceContador(id, req.contadorId);
+        if (!guia) return res.status(404).json({ erro: 'Guia não encontrada ou acesso negado.' });
+        if (guia.status !== 'rascunho' && guia.status !== 'pendente') return res.status(400).json({ erro: 'Apenas guias em rascunho podem ser publicadas.' });
+        await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['publicada', id]);
+        await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Publicação', 'Guia publicada para o portal do cliente');
+        await registrarAuditoria(req.contadorId, 'contador', `Publicou guia ${guia.tipoimposto} (ID: ${id})`, req);
+        res.json({ mensagem: 'Guia publicada com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao publicar: ' + erro.message });
+    }
+});
+
+// Cancelar guia
+app.put('/api/guias/:id/cancelar', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const guia = await guiaPertenceContador(id, req.contadorId);
+        if (!guia) return res.status(404).json({ erro: 'Guia não encontrada ou acesso negado.' });
+        if (guia.status === 'cancelada') return res.status(400).json({ erro: 'Guia já está cancelada.' });
+        if (guia.status === 'paga') return res.status(400).json({ erro: 'Não é possível cancelar uma guia paga.' });
+        const statusAnterior = guia.status;
+        await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['cancelada', id]);
+        await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Cancelamento', `Guia cancelada (status anterior: ${statusAnterior})`);
+        await registrarAuditoria(req.contadorId, 'contador', `Cancelou guia ${guia.tipoimposto} (ID: ${id})`, req);
+        res.json({ mensagem: 'Guia cancelada.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao cancelar: ' + erro.message });
+    }
+});
+
+// Editar guia (apenas se estiver em rascunho — versionamento)
+app.put('/api/guias/:id', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const guia = await guiaPertenceContador(id, req.contadorId);
+        if (!guia) return res.status(404).json({ erro: 'Guia não encontrada ou acesso negado.' });
+        if (guia.status !== 'rascunho' && guia.status !== 'pendente') return res.status(400).json({ erro: 'Apenas guias em rascunho podem ser editadas.' });
+        const { tipoimposto, competencia, valor, vencimento, pix, descricao, observacao } = req.body;
+        const updates = [];
+        const params = [];
+        let idx = 1;
+        if (tipoimposto !== undefined) { updates.push(`tipoimposto = $${idx++}`); params.push(tipoimposto); }
+        if (competencia !== undefined) { updates.push(`competencia = $${idx++}`); params.push(competencia); }
+        if (valor !== undefined) { updates.push(`valor = $${idx++}`); params.push(valor); }
+        if (vencimento !== undefined) { updates.push(`vencimento = $${idx++}`); params.push(vencimento || null); }
+        if (pix !== undefined) { updates.push(`pix = $${idx++}`); params.push(pix); }
+        if (descricao !== undefined) { updates.push(`descricao = $${idx++}`); params.push(descricao); }
+        if (observacao !== undefined) { updates.push(`observacao = $${idx++}`); params.push(observacao); }
+        if (req.file) {
+            updates.push(`arquivonome = $${idx++}`); params.push(req.file.originalname);
+            updates.push(`arquivodados = $${idx++}`); params.push(req.file.buffer);
+            updates.push(`arquivotipo = $${idx++}`); params.push(req.file.mimetype);
+        }
+        if (updates.length > 0) {
+            updates.push(`versao = versao + 1`);
+            params.push(id);
+            await pool.query(`UPDATE guias SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+            await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Alteração/Versionamento', `Guia editada (versão ${guia.versao + 1})`);
+        }
+        res.json({ mensagem: 'Guia atualizada com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao editar: ' + erro.message });
+    }
+});
+
+// Histórico de uma guia (contador)
+app.get('/api/guias/:id/historico', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const guia = await guiaPertenceContador(id, req.contadorId);
+        if (!guia) return res.status(404).json({ erro: 'Guia não encontrada ou acesso negado.' });
+        const resultado = await pool.query(
+            'SELECT * FROM guia_historico WHERE guia_id = $1 ORDER BY data DESC', [id]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
 });
 
@@ -762,14 +896,21 @@ app.delete('/api/guias/:id', verificarTokenContador, async (req, res) => {
 app.get('/api/guias/download/:id', verificarTokenDownload, async (req, res) => {
     try {
         const { id } = req.params;
-        const resultado = await pool.query('SELECT cnpj, arquivonome, arquivodados, arquivotipo FROM guias WHERE id = $1', [id]);
+        const resultado = await pool.query('SELECT cnpj, arquivonome, arquivodados, arquivotipo, status FROM guias WHERE id = $1', [id]);
         if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const guia = resultado.rows[0];
         // Verifica propriedade
         if (req.tokenTipo === 'contador') {
             const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.cnpj, req.contadorId]);
             if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Acesso negado.' });
-        } else if (req.tokenTipo === 'cliente' && guia.cnpj !== req.empresaCnpj) {
+            await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Download', 'Contador baixou o arquivo da guia');
+        } else if (req.tokenTipo === 'cliente' && guia.cnpj === req.empresaCnpj) {
+            // Atualiza status para 'baixada' se estava 'publicada' ou 'visualizada'
+            if (guia.status === 'publicada' || guia.status === 'visualizada') {
+                await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['baixada', id]);
+            }
+            await registrarHistoricoGuia(id, req.empresaId, 'cliente', 'Download', 'Cliente baixou o arquivo da guia');
+        } else {
             return res.status(403).json({ erro: 'Acesso negado.' });
         }
         res.setHeader('Content-Type', guia.arquivotipo || 'application/pdf');
@@ -1546,10 +1687,35 @@ app.get('/api/cliente/dashboard', verificarTokenCliente, async (req, res) => {
 app.get('/api/cliente/guias', verificarTokenCliente, async (req, res) => {
     try {
         const guias = await pool.query(
-            'SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC',
+            `SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, descricao, observacao, arquivonome, status, versao, datacriacao 
+             FROM guias WHERE cnpj = $1 AND status NOT IN ('rascunho', 'cancelada') ORDER BY datacriacao DESC`,
             [req.empresaCnpj]
         );
+        // Registra visualização para guias com status 'publicada' (passa para 'visualizada')
+        for (const g of guias.rows) {
+            if (g.status === 'publicada') {
+                await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['visualizada', g.id]);
+                await registrarHistoricoGuia(g.id, req.empresaId, 'cliente', 'Visualização', 'Cliente visualizou a guia');
+            }
+        }
         res.json(guias.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Cliente - histórico de uma guia (apenas ações permitidas: visualização, download)
+app.get('/api/cliente/guias/:id/historico', verificarTokenCliente, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const guia = await pool.query('SELECT cnpj FROM guias WHERE id = $1', [id]);
+        if (guia.rows.length === 0) return res.status(404).json({ erro: 'Guia não encontrada.' });
+        if (guia.rows[0].cnpj !== req.empresaCnpj) return res.status(403).json({ erro: 'Acesso negado.' });
+        // Cliente só vê histórico de visualização e download (não vê criação, publicação, cancelamento, alteração)
+        const resultado = await pool.query(
+            `SELECT * FROM guia_historico WHERE guia_id = $1 AND acao IN ('Visualização', 'Download') ORDER BY data DESC`, [id]
+        );
+        res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
