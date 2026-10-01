@@ -23,11 +23,14 @@ const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura';
 // ==========================================
 // AUDIT LOG - Registro de atividades (LGPD)
 // ==========================================
-async function registrarAuditoria(usuarioId, usuarioTipo, acao, req) {
+async function registrarAuditoria(usuarioId, usuarioTipo, acao, req, extra) {
     try {
+        const { entidade, entidade_id, empresa_id, versao, detalhe } = extra || {};
         await pool.query(
-            'INSERT INTO audit_log (usuario_id, usuario_tipo, acao, ip, datacriacao) VALUES ($1, $2, $3, $4, NOW())',
-            [usuarioId, usuarioTipo, acao, req.ip || 'unknown']
+            `INSERT INTO audit_log (usuario_id, usuario_tipo, acao, ip, entidade, entidade_id, empresa_id, versao, detalhe, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+            [usuarioId, usuarioTipo, acao, req.ip || 'unknown',
+             entidade || null, entidade_id || null, empresa_id || null, versao || null, detalhe || null]
         );
     } catch (e) {
         console.error('Erro ao registrar auditoria:', e.message);
@@ -307,6 +310,20 @@ async function criarTabelasAutomaticamente() {
         // Valor padrão: R$ 99 por contador ativo por mês
         await pool.query(`INSERT INTO config_sistema (chave, valor) VALUES ('valor_mensal_contador', '99') ON CONFLICT (chave) DO NOTHING;`);
 
+        // ==========================================
+        // SEGURANÇA E AUDITORIA — colunas extras
+        // ==========================================
+        // Colunas adicionais no audit_log para rastreabilidade completa
+        await pool.query(`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entidade VARCHAR(50);`);
+        await pool.query(`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entidade_id INTEGER;`);
+        await pool.query(`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS empresa_id INTEGER;`);
+        await pool.query(`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS versao INTEGER;`);
+        await pool.query(`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS detalhe TEXT;`);
+
+        // Versionamento de documentos (igual ao que já existe em guias)
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS versao INTEGER DEFAULT 1;`);
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS versao_anterior_id INTEGER;`);
+
         // Garante colunas extras no CRM
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS origem VARCHAR(50);`);
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS servico_interesse VARCHAR(100);`);
@@ -321,9 +338,120 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS data_proposta TIMESTAMP;`);
         await pool.query(`ALTER TABLE crm_contatos ADD COLUMN IF NOT EXISTS data_fechamento TIMESTAMP;`);
 
-        console.log("✅ Tabelas e colunas verificadas/criadas com sucesso!");
+        // ==========================================
+        // ROW LEVEL SECURITY (RLS) — defense-in-depth
+        // ==========================================
+        // Habilita RLS nas tabelas sensíveis. As policies usam a session variable
+        // app.contador_id: se não estiver setada (pool padrão da aplicação), permite tudo;
+        // se estiver setada (conexão direta ao banco), filtra por contador_id.
+        const rlsTables = ['documentos', 'guias', 'empresas', 'pendencias', 'financeiro',
+            'calendario_obrigacoes', 'procuracoes', 'notas_fiscais', 'folha_pagamento',
+            'checklist_mensal', 'avisos', 'chat_mensagens', 'crm_contatos', 'crm_atividades',
+            'crm_tarefas', 'documento_historico', 'guia_historico', 'audit_log'];
+
+        for (const tabela of rlsTables) {
+            await pool.query(`ALTER TABLE ${tabela} ENABLE ROW LEVEL SECURITY;`);
+            await pool.query(`ALTER TABLE ${tabela} FORCE ROW LEVEL SECURITY;`);
+        }
+
+        // Tabelas com coluna contador_id (maioria)
+        const contadorIdTables = ['documentos', 'pendencias', 'financeiro', 'calendario_obrigacoes',
+            'procuracoes', 'notas_fiscais', 'folha_pagamento', 'avisos', 'chat_mensagens',
+            'crm_contatos', 'crm_atividades', 'crm_tarefas'];
+        for (const tabela of contadorIdTables) {
+            await pool.query(`DROP POLICY IF EXISTS ${tabela}_rls_policy ON ${tabela};`);
+            await pool.query(`
+                CREATE POLICY ${tabela}_rls_policy ON ${tabela}
+                USING (current_setting('app.contador_id', true) IS NULL
+                       OR contador_id = current_setting('app.contador_id', true)::INTEGER)
+            `);
+        }
+
+        // empresas: tem contador_id E contadorid
+        await pool.query(`DROP POLICY IF EXISTS empresas_rls_policy ON empresas;`);
+        await pool.query(`
+            CREATE POLICY empresas_rls_policy ON empresas
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR contador_id = current_setting('app.contador_id', true)::INTEGER
+                   OR contadorid = current_setting('app.contador_id', true)::INTEGER)
+        `);
+
+        // guias: não tem contador_id direto — usa subquery via empresas.cnpj
+        await pool.query(`DROP POLICY IF EXISTS guias_rls_policy ON guias;`);
+        await pool.query(`
+            CREATE POLICY guias_rls_policy ON guias
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR EXISTS (
+                       SELECT 1 FROM empresas e
+                       WHERE e.cnpj = guias.cnpj
+                       AND (e.contador_id = current_setting('app.contador_id', true)::INTEGER
+                            OR e.contadorid = current_setting('app.contador_id', true)::INTEGER)
+                   ))
+        `);
+
+        // checklist_mensal: usa empresa_id — subquery via empresas
+        await pool.query(`DROP POLICY IF EXISTS checklist_mensal_rls_policy ON checklist_mensal;`);
+        await pool.query(`
+            CREATE POLICY checklist_mensal_rls_policy ON checklist_mensal
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR EXISTS (
+                       SELECT 1 FROM empresas e
+                       WHERE e.id = checklist_mensal.empresa_id
+                       AND (e.contador_id = current_setting('app.contador_id', true)::INTEGER
+                            OR e.contadorid = current_setting('app.contador_id', true)::INTEGER)
+                   ))
+        `);
+
+        // documento_historico e guia_historico: usam usuario_id + usuario_tipo
+        await pool.query(`DROP POLICY IF EXISTS documento_historico_rls_policy ON documento_historico;`);
+        await pool.query(`
+            CREATE POLICY documento_historico_rls_policy ON documento_historico
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR (usuario_tipo = 'contador' AND usuario_id = current_setting('app.contador_id', true)::INTEGER))
+        `);
+        await pool.query(`DROP POLICY IF EXISTS guia_historico_rls_policy ON guia_historico;`);
+        await pool.query(`
+            CREATE POLICY guia_historico_rls_policy ON guia_historico
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR (usuario_tipo = 'contador' AND usuario_id = current_setting('app.contador_id', true)::INTEGER))
+        `);
+
+        // audit_log: filtra por usuario_id + usuario_tipo
+        await pool.query(`DROP POLICY IF EXISTS audit_log_rls_policy ON audit_log;`);
+        await pool.query(`
+            CREATE POLICY audit_log_rls_policy ON audit_log
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR (usuario_tipo = 'contador' AND usuario_id = current_setting('app.contador_id', true)::INTEGER)
+                   OR (usuario_tipo = 'cliente' AND empresa_id = COALESCE(current_setting('app.empresa_id', true)::INTEGER, -1)))
+        `);
+
+        console.log("✅ Tabelas, colunas e RLS verificados/criados com sucesso!");
     } catch (err) {
         console.error("❌ Erro ao criar tabelas:", err.message);
+    }
+}
+
+// ==========================================
+// HELPER: Executa query com contexto RLS (session variable)
+// ==========================================
+async function queryWithRLS(queryText, params, userContext) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        if (userContext?.contadorId) {
+            await client.query(`SET LOCAL app.contador_id = $1`, [String(userContext.contadorId)]);
+        }
+        if (userContext?.empresaId) {
+            await client.query(`SET LOCAL app.empresa_id = $1`, [String(userContext.empresaId)]);
+        }
+        const result = await client.query(queryText, params);
+        await client.query('COMMIT');
+        return result;
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
     }
 }
 
@@ -424,6 +552,16 @@ function verificarTokenDownload(req, res, next) {
 async function empresaPertenceContador(empresaId, contadorId) {
     const r = await pool.query('SELECT 1 FROM empresas WHERE id = $1 AND (contador_id = $2 OR contadorid = $2)', [empresaId, contadorId]);
     return r.rows.length > 0;
+}
+
+// Helper: valida que empresa_id (do body) pertence ao contador; retorna true ou envia 403
+async function validarEmpresaContador(res, empresaId, contadorId) {
+    if (!empresaId) return true; // empresa_id opcional
+    if (!(await empresaPertenceContador(empresaId, contadorId))) {
+        res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        return false;
+    }
+    return true;
 }
 
 // ==========================================
@@ -608,10 +746,57 @@ app.delete('/api/admin/contadores/:id', verificarAdmin, async (req, res) => {
         const { id } = req.params;
         if (req.contadorId == id) return res.status(400).json({ erro: 'Você não pode excluir sua própria conta.' });
         await pool.query('DELETE FROM contadores WHERE id = $1', [id]);
-        await registrarAuditoria(req.contadorId, 'contador', `Admin excluiu acesso ID: ${id}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Admin excluiu acesso ID: ${id}`, req, { entidade: 'contador', entidade_id: parseInt(id) });
         res.json({ mensagem: 'Acesso excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao excluir: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 1c. CONSULTA DE AUDITORIA (Admin)
+// ==========================================
+app.get('/api/admin/auditoria', verificarAdmin, async (req, res) => {
+    try {
+        const { entidade, entidade_id, empresa_id, usuario_tipo, limite } = req.query;
+        let query = `SELECT a.*, c.nomeescritorio as nome_contador, e.razaosocial as nome_empresa
+                     FROM audit_log a
+                     LEFT JOIN contadores c ON (a.usuario_tipo = 'contador' AND a.usuario_id = c.id)
+                     LEFT JOIN empresas e ON a.empresa_id = e.id
+                     WHERE 1=1`;
+        const params = [];
+        let idx = 1;
+        if (entidade) { query += ` AND a.entidade = $${idx++}`; params.push(entidade); }
+        if (entidade_id) { query += ` AND a.entidade_id = $${idx++}`; params.push(parseInt(entidade_id)); }
+        if (empresa_id) { query += ` AND a.empresa_id = $${idx++}`; params.push(parseInt(empresa_id)); }
+        if (usuario_tipo) { query += ` AND a.usuario_tipo = $${idx++}`; params.push(usuario_tipo); }
+        query += ` ORDER BY a.datacriacao DESC LIMIT $${idx++}`;
+        params.push(parseInt(limite) || 200);
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar auditoria: ' + erro.message });
+    }
+});
+
+// Consulta de auditoria do próprio contador (não-admin vê só suas ações)
+app.get('/api/auditoria', verificarTokenContador, async (req, res) => {
+    try {
+        const { entidade, entidade_id, limite } = req.query;
+        let query = `SELECT a.*, e.razaosocial as nome_empresa
+                     FROM audit_log a
+                     LEFT JOIN empresas e ON a.empresa_id = e.id
+                     WHERE a.usuario_id = $1 AND a.usuario_tipo = 'contador'`;
+        const params = [req.contadorId];
+        let idx = 2;
+        if (entidade) { query += ` AND a.entidade = $${idx++}`; params.push(entidade); }
+        if (entidade_id) { query += ` AND a.entidade_id = $${idx++}`; params.push(parseInt(entidade_id)); }
+        query += ` ORDER BY a.datacriacao DESC LIMIT $${idx++}`;
+        params.push(parseInt(limite) || 100);
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar auditoria: ' + erro.message });
     }
 });
 
@@ -684,7 +869,8 @@ app.post('/api/cadastrar-empresa', async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())`,
             [cnpjLimpo, razaoSocial, emailEmpresa || '', senhaHash, senhaHash, contadorId, contadorId]
         );
-        if (contadorId) await registrarAuditoria(contadorId, 'contador', `Cadastrou empresa: ${razaoSocial}`, req);
+        if (contadorId) await registrarAuditoria(contadorId, 'contador', `Cadastrou empresa: ${razaoSocial}`, req,
+            { entidade: 'empresa', detalhe: `CNPJ: ${cnpjLimpo}` });
         res.status(201).json({ mensagem: 'Empresa cadastrada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao cadastrar empresa: ' + erro.message });
@@ -695,7 +881,8 @@ app.delete('/api/empresas/:id', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
         await pool.query('DELETE FROM empresas WHERE id = $1 AND (contador_id = $2 OR contadorid = $2)', [id, req.contadorId]);
-        await registrarAuditoria(req.contadorId, 'contador', `Excluiu empresa ID: ${id}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu empresa ID: ${id}`, req,
+            { entidade: 'empresa', entidade_id: parseInt(id) });
         res.json({ mensagem: 'Empresa excluída.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao excluir: ' + erro.message });
@@ -731,7 +918,8 @@ app.post('/api/guias', verificarTokenContador, upload.single('arquivo'), async (
         );
         const guiaId = result.rows[0].id;
         await registrarHistoricoGuia(guiaId, req.contadorId, 'contador', 'Criação', `Guia ${tipoimposto} criada como rascunho`);
-        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou guia ${tipoimposto} para CNPJ ${cnpjLimpo}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou guia ${tipoimposto} para CNPJ ${cnpjLimpo}`, req,
+            { entidade: 'guia', entidade_id: guiaId, empresa_id: parseInt(empresa_id) || null, versao: 1 });
         res.status(201).json({ mensagem: 'Guia criada como rascunho com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao salvar guia: ' + erro.message });
@@ -804,7 +992,8 @@ app.put('/api/guias/:id/publicar', verificarTokenContador, async (req, res) => {
         if (guia.status !== 'rascunho' && guia.status !== 'pendente') return res.status(400).json({ erro: 'Apenas guias em rascunho podem ser publicadas.' });
         await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['publicada', id]);
         await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Publicação', 'Guia publicada para o portal do cliente');
-        await registrarAuditoria(req.contadorId, 'contador', `Publicou guia ${guia.tipoimposto} (ID: ${id})`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Publicou guia ${guia.tipoimposto} (ID: ${id})`, req,
+            { entidade: 'guia', entidade_id: parseInt(id), versao: guia.versao || 1 });
         res.json({ mensagem: 'Guia publicada com sucesso!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao publicar: ' + erro.message });
@@ -822,7 +1011,8 @@ app.put('/api/guias/:id/cancelar', verificarTokenContador, async (req, res) => {
         const statusAnterior = guia.status;
         await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['cancelada', id]);
         await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Cancelamento', `Guia cancelada (status anterior: ${statusAnterior})`);
-        await registrarAuditoria(req.contadorId, 'contador', `Cancelou guia ${guia.tipoimposto} (ID: ${id})`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Cancelou guia ${guia.tipoimposto} (ID: ${id})`, req,
+            { entidade: 'guia', entidade_id: parseInt(id), versao: guia.versao || 1, detalhe: `Status anterior: ${statusAnterior}` });
         res.json({ mensagem: 'Guia cancelada.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao cancelar: ' + erro.message });
@@ -886,7 +1076,8 @@ app.delete('/api/guias/:id', verificarTokenContador, async (req, res) => {
         const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.rows[0].cnpj, req.contadorId]);
         if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Você não tem acesso a esta guia.' });
         await pool.query('DELETE FROM guias WHERE id = $1', [req.params.id]);
-        await registrarAuditoria(req.contadorId, 'contador', `Excluiu guia ID: ${req.params.id}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu guia ID: ${req.params.id}`, req,
+            { entidade: 'guia', entidade_id: parseInt(req.params.id) });
         res.json({ mensagem: 'Guia excluída.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -897,19 +1088,23 @@ app.get('/api/guias/download/:id', verificarTokenDownload, async (req, res) => {
     try {
         const { id } = req.params;
         const resultado = await pool.query('SELECT cnpj, arquivonome, arquivodados, arquivotipo, status FROM guias WHERE id = $1', [id]);
-        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        if (resultado.rows.length === 0) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const guia = resultado.rows[0];
-        // Verifica propriedade
+        // Verifica propriedade ANTES de revelar existência do arquivo
         if (req.tokenTipo === 'contador') {
             const empresa = await pool.query('SELECT 1 FROM empresas WHERE cnpj = $1 AND (contador_id = $2 OR contadorid = $2)', [guia.cnpj, req.contadorId]);
             if (empresa.rows.length === 0) return res.status(403).json({ erro: 'Acesso negado.' });
+            if (!guia.arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
             await registrarHistoricoGuia(id, req.contadorId, 'contador', 'Download', 'Contador baixou o arquivo da guia');
+            await registrarAuditoria(req.contadorId, 'contador', 'Download de guia', req, { entidade: 'guia', entidade_id: parseInt(id) });
         } else if (req.tokenTipo === 'cliente' && guia.cnpj === req.empresaCnpj) {
+            if (!guia.arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
             // Atualiza status para 'baixada' se estava 'publicada' ou 'visualizada'
             if (guia.status === 'publicada' || guia.status === 'visualizada') {
                 await pool.query('UPDATE guias SET status = $1 WHERE id = $2', ['baixada', id]);
             }
             await registrarHistoricoGuia(id, req.empresaId, 'cliente', 'Download', 'Cliente baixou o arquivo da guia');
+            await registrarAuditoria(req.empresaId, 'cliente', 'Download de guia', req, { entidade: 'guia', entidade_id: parseInt(id) });
         } else {
             return res.status(403).json({ erro: 'Acesso negado.' });
         }
@@ -1038,7 +1233,8 @@ app.post('/api/documentos', verificarTokenContador, upload.single('arquivo'), as
              statusInicial]
         );
         await registrarHistoricoDocumento(result.rows[0].id, req.contadorId, 'contador', 'Documento criado', `${tipo_documento || categoria || 'Documento'} enviado pelo contador`);
-        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou documento: ${descricao || categoria}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Cadastrou documento: ${descricao || categoria}`, req,
+            { entidade: 'documento', entidade_id: result.rows[0].id, empresa_id: parseInt(empresa_id) || null, versao: 1 });
         res.status(201).json({ mensagem: 'Documento salvo!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1059,7 +1255,8 @@ app.post('/api/documentos/cliente', verificarTokenCliente, upload.single('arquiv
              req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
         );
         await registrarHistoricoDocumento(result.rows[0].id, req.empresaId, 'cliente', 'Documento enviado', `${tipo_documento || categoria || 'Documento'} enviado pelo cliente`);
-        await registrarAuditoria(req.empresaId, 'cliente', `Enviou documento: ${descricao || categoria}`, req);
+        await registrarAuditoria(req.empresaId, 'cliente', `Enviou documento: ${descricao || categoria}`, req,
+            { entidade: 'documento', entidade_id: result.rows[0].id, empresa_id: req.empresaId, versao: 1 });
         res.status(201).json({ mensagem: 'Documento enviado!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1082,13 +1279,21 @@ app.get('/api/documentos/download/:id', verificarTokenDownload, async (req, res)
     try {
         const { id } = req.params;
         const resultado = await pool.query('SELECT empresa_id, contador_id, arquivonome, arquivodados, arquivotipo FROM documentos WHERE id = $1', [id]);
-        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        if (resultado.rows.length === 0) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const doc = resultado.rows[0];
-        // Verifica propriedade
+        // Verifica propriedade ANTES de revelar existência do arquivo
         if (req.tokenTipo === 'contador' && doc.contador_id !== req.contadorId) {
             return res.status(403).json({ erro: 'Acesso negado.' });
         } else if (req.tokenTipo === 'cliente' && doc.empresa_id !== req.empresaId) {
             return res.status(403).json({ erro: 'Acesso negado.' });
+        }
+        if (!doc.arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        if (req.tokenTipo === 'contador') {
+            await registrarAuditoria(req.contadorId, 'contador', 'Download de documento', req,
+                { entidade: 'documento', entidade_id: parseInt(id), empresa_id: doc.empresa_id });
+        } else {
+            await registrarAuditoria(req.empresaId, 'cliente', 'Download de documento', req,
+                { entidade: 'documento', entidade_id: parseInt(id), empresa_id: doc.empresa_id });
         }
         res.setHeader('Content-Type', doc.arquivotipo || 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${doc.arquivonome}"`);
@@ -1106,6 +1311,8 @@ app.put('/api/documentos/:id/status', verificarTokenContador, async (req, res) =
         if (anterior.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado.' });
         await pool.query('UPDATE documentos SET status = $1 WHERE id = $2 AND contador_id = $3', [status, id, req.contadorId]);
         await registrarHistoricoDocumento(id, req.contadorId, 'contador', 'Status alterado', `De "${anterior.rows[0].status}" para "${status}"`);
+        await registrarAuditoria(req.contadorId, 'contador', `Alterou status de documento para "${status}"`, req,
+            { entidade: 'documento', entidade_id: parseInt(id), detalhe: `De "${anterior.rows[0].status}" para "${status}"` });
         res.json({ mensagem: 'Status atualizado.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1145,7 +1352,8 @@ app.get('/api/documentos/:id/historico', verificarTokenContador, async (req, res
 app.delete('/api/documentos/:id', verificarTokenContador, async (req, res) => {
     try {
         await pool.query('DELETE FROM documentos WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
-        await registrarAuditoria(req.contadorId, 'contador', `Excluiu documento ID: ${req.params.id}`, req);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu documento ID: ${req.params.id}`, req,
+            { entidade: 'documento', entidade_id: parseInt(req.params.id) });
         res.json({ mensagem: 'Documento excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1160,7 +1368,76 @@ app.delete('/api/documentos/cliente/:id', verificarTokenCliente, async (req, res
             [req.params.id, req.empresaId, 'cliente']
         );
         if (resultado.rows.length === 0) return res.status(403).json({ erro: 'Você só pode excluir documentos enviados por você.' });
+        await registrarAuditoria(req.empresaId, 'cliente', 'Excluiu documento', req, { entidade: 'documento', entidade_id: parseInt(req.params.id) });
         res.json({ mensagem: 'Documento excluído.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 5b. VERSIONAMENTO DE DOCUMENTOS
+// ==========================================
+// Criar nova versão de um documento publicado (NÃO substitui silenciosamente)
+// O documento original é cancelado e uma nova versão é criada com versao + 1
+app.post('/api/documentos/:id/nova-versao', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Busca o documento original e valida propriedade
+        const docResult = await pool.query('SELECT * FROM documentos WHERE id = $1 AND contador_id = $2', [id, req.contadorId]);
+        if (docResult.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado ou acesso negado.' });
+        const doc = docResult.rows[0];
+
+        const { categoria, descricao, tipo_documento, competencia, observacao } = req.body;
+
+        // Cancela a versão anterior (preserva o histórico)
+        await pool.query('UPDATE documentos SET status = $1 WHERE id = $2', ['cancelada', id]);
+        await registrarHistoricoDocumento(id, req.contadorId, 'contador', 'Versão cancelada', `Versão ${doc.versao} cancelada para criação de nova versão`);
+
+        // Cria a nova versão
+        const novaVersao = (doc.versao || 1) + 1;
+        const result = await pool.query(
+            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, tipo_documento, competencia, observacao, usuario_envio, arquivonome, arquivodados, arquivotipo, status, enviado_por, versao, versao_anterior_id, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'enviado', 'contador', $13, $14, NOW()) RETURNING id`,
+            [doc.empresa_id, req.contadorId, doc.tipo, categoria || doc.categoria, descricao || doc.descricao,
+             tipo_documento || doc.tipo_documento, competencia || doc.competencia, observacao || doc.observacao, doc.usuario_envio,
+             req.file ? req.file.originalname : doc.arquivonome, req.file ? req.file.buffer : doc.arquivodados, req.file ? req.file.mimetype : doc.arquivotipo,
+             novaVersao, id]
+        );
+        const novoId = result.rows[0].id;
+        await registrarHistoricoDocumento(novoId, req.contadorId, 'contador', 'Nova versão criada', `Versão ${novaVersao} criada (anterior: versão ${doc.versao}, ID ${id})`);
+        await registrarAuditoria(req.contadorId, 'contador', `Nova versão de documento criada (v${novaVersao})`, req,
+            { entidade: 'documento', entidade_id: novoId, empresa_id: doc.empresa_id, versao: novaVersao, detalhe: `Substituiu documento ID ${id} (v${doc.versao})` });
+
+        res.status(201).json({ mensagem: `Nova versão (v${novaVersao}) criada com sucesso! A versão anterior foi cancelada.`, novoId, versao: novaVersao });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao criar nova versão: ' + erro.message });
+    }
+});
+
+// Listar versões de um documento (todas as versões, incluindo canceladas)
+app.get('/api/documentos/:id/versoes', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const doc = await pool.query('SELECT * FROM documentos WHERE id = $1 AND contador_id = $2', [id, req.contadorId]);
+        if (doc.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado.' });
+
+        // Busca a versão original (percorrendo versao_anterior_id) e todas as versões derivadas
+        const resultado = await pool.query(
+            `WITH RECURSIVE ancestrais AS (
+                SELECT * FROM documentos WHERE id = $1
+                UNION ALL
+                SELECT d.* FROM documentos d JOIN ancestrais a ON d.id = a.versao_anterior_id
+            ), descendentes AS (
+                SELECT * FROM ancestrais
+                UNION ALL
+                SELECT d.* FROM documentos d JOIN descendentes des ON d.versao_anterior_id = des.id
+            )
+            SELECT DISTINCT id, versao, status, categoria, descricao, tipo_documento, competencia, usuario_envio, enviado_por, datacriacao
+            FROM descendentes WHERE contador_id = $2 ORDER BY versao ASC`,
+            [id, req.contadorId]
+        );
+        res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
@@ -1185,6 +1462,7 @@ app.get('/api/pendencias', verificarTokenContador, async (req, res) => {
 app.post('/api/pendencias', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, descricao, prioridade, prazo } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO pendencias (empresa_id, contador_id, descricao, prioridade, status, prazo, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
             [empresa_id || null, req.contadorId, descricao, prioridade || 'media', 'pendente', prazo || null]
@@ -1199,8 +1477,11 @@ app.put('/api/pendencias/:id', verificarTokenContador, async (req, res) => {
     try {
         const { id } = req.params;
         const { status, prioridade } = req.body;
-        await pool.query('UPDATE pendencias SET status = COALESCE($1, status), prioridade = COALESCE($2, prioridade) WHERE id = $3 AND contador_id = $4',
+        const result = await pool.query('UPDATE pendencias SET status = COALESCE($1, status), prioridade = COALESCE($2, prioridade) WHERE id = $3 AND contador_id = $4 RETURNING empresa_id',
             [status, prioridade, id, req.contadorId]);
+        if (result.rows.length === 0) return res.status(404).json({ erro: 'Pendência não encontrada ou acesso negado.' });
+        await registrarAuditoria(req.contadorId, 'contador', `Atualizou pendência ID: ${id}`, req,
+            { entidade: 'pendencia', entidade_id: parseInt(id), empresa_id: result.rows[0].empresa_id || null });
         res.json({ mensagem: 'Pendência atualizada!' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1209,7 +1490,10 @@ app.put('/api/pendencias/:id', verificarTokenContador, async (req, res) => {
 
 app.delete('/api/pendencias/:id', verificarTokenContador, async (req, res) => {
     try {
-        await pool.query('DELETE FROM pendencias WHERE id = $1 AND contador_id = $2', [req.params.id, req.contadorId]);
+        const result = await pool.query('DELETE FROM pendencias WHERE id = $1 AND contador_id = $2 RETURNING empresa_id', [req.params.id, req.contadorId]);
+        if (result.rows.length === 0) return res.status(404).json({ erro: 'Pendência não encontrada ou acesso negado.' });
+        await registrarAuditoria(req.contadorId, 'contador', `Removeu pendência ID: ${req.params.id}`, req,
+            { entidade: 'pendencia', entidade_id: parseInt(req.params.id), empresa_id: result.rows[0].empresa_id || null });
         res.json({ mensagem: 'Pendência removida.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
@@ -1247,6 +1531,7 @@ app.get('/api/checklist/:empresaId', verificarTokenContador, async (req, res) =>
 app.post('/api/checklist', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, item, status, competencia } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO checklist_mensal (empresa_id, item, status, competencia, datacriacao) VALUES ($1, $2, $3, $4, NOW())',
             [empresa_id, item, status || 'pendente', competencia || '']
@@ -1303,6 +1588,7 @@ app.get('/api/avisos', verificarTokenContador, async (req, res) => {
 app.post('/api/avisos', verificarTokenContador, async (req, res) => {
     try {
         const { titulo, mensagem, tipo, empresa_id } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO avisos (contador_id, empresa_id, titulo, mensagem, tipo, lido, datacriacao) VALUES ($1, $2, $3, $4, $5, FALSE, NOW())',
             [req.contadorId, empresa_id || null, titulo, mensagem, tipo || 'info']
@@ -1402,6 +1688,7 @@ app.get('/api/financeiro', verificarTokenContador, async (req, res) => {
 app.post('/api/financeiro', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, descricao, valor, vencimento, competencia, status } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO financeiro (contador_id, empresa_id, descricao, valor, status, vencimento, competencia, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
             [req.contadorId, empresa_id || null, descricao, valor || 0, status || 'pendente', vencimento || null, competencia || '']
@@ -1439,6 +1726,7 @@ app.get('/api/calendario', verificarTokenContador, async (req, res) => {
 app.post('/api/calendario', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, titulo, descricao, tipo, dataevento, status } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO calendario_obrigacoes (contador_id, empresa_id, titulo, descricao, tipo, dataevento, status, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
             [req.contadorId, empresa_id || null, titulo, descricao || '', tipo || 'obrigacao', dataevento, status || 'pendente']
@@ -1476,6 +1764,7 @@ app.get('/api/procuracoes', verificarTokenContador, async (req, res) => {
 app.post('/api/procuracoes', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, tipo, validade, observacao, status } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO procuracoes (contador_id, empresa_id, tipo, status, validade, observacao, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
             [req.contadorId, empresa_id || null, tipo || '', status || 'ativo', validade || null, observacao || '']
@@ -1504,6 +1793,7 @@ app.get('/api/notas-fiscais', verificarTokenContador, async (req, res) => {
 app.post('/api/notas-fiscais', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
     try {
         const { empresa_id, numero, competencia, valor, status } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             `INSERT INTO notas_fiscais (empresa_id, contador_id, numero, competencia, valor, status, arquivonome, arquivodados, arquivotipo, datacriacao)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
@@ -1520,14 +1810,20 @@ app.get('/api/notas-fiscais/download/:id', verificarTokenDownload, async (req, r
     try {
         const { id } = req.params;
         const resultado = await pool.query('SELECT empresa_id, contador_id, arquivonome, arquivodados, arquivotipo FROM notas_fiscais WHERE id = $1', [id]);
-        if (resultado.rows.length === 0 || !resultado.rows[0].arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        if (resultado.rows.length === 0) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
         const nf = resultado.rows[0];
-        // Verifica propriedade
+        // Verifica propriedade ANTES de revelar existência do arquivo
         if (req.tokenTipo === 'contador' && nf.contador_id !== req.contadorId) {
             return res.status(403).json({ erro: 'Acesso negado.' });
         } else if (req.tokenTipo === 'cliente' && nf.empresa_id !== req.empresaId) {
             return res.status(403).json({ erro: 'Acesso negado.' });
         }
+        if (!nf.arquivodados) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+        await registrarAuditoria(
+            req.tokenTipo === 'contador' ? req.contadorId : req.empresaId,
+            req.tokenTipo, 'Download de nota fiscal', req,
+            { entidade: 'nota_fiscal', entidade_id: parseInt(id), empresa_id: nf.empresa_id }
+        );
         res.setHeader('Content-Type', nf.arquivotipo || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${nf.arquivonome || 'nota.pdf'}"`);
         res.send(nf.arquivodados);
@@ -1554,6 +1850,7 @@ app.get('/api/folha-pagamento', verificarTokenContador, async (req, res) => {
 app.post('/api/folha-pagamento', verificarTokenContador, async (req, res) => {
     try {
         const { empresa_id, competencia, funcionarios, valor_total, status } = req.body;
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
         await pool.query(
             'INSERT INTO folha_pagamento (empresa_id, contador_id, competencia, funcionarios, valor_total, status, datacriacao) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
             [empresa_id || null, req.contadorId, competencia || '', funcionarios || 0, valor_total || 0, status || 'pendente']
