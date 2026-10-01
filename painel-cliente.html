@@ -154,7 +154,7 @@
             <div class="nav-section">
                 <div class="nav-section-title">Documentos</div>
                 <a class="nav-item" data-view="pendencias" onclick="navigate('pendencias')"><i data-lucide="alert-triangle"></i> Pendências</a>
-                <a class="nav-item" data-view="documentos" onclick="navigate('documentos')"><i data-lucide="upload"></i> Enviar Documentos</a>
+                <a class="nav-item" data-view="documentos" onclick="navigate('documentos')"><i data-lucide="folder-open"></i> Central de Documentos</a>
                 <a class="nav-item" data-view="guias" onclick="navigate('guias')"><i data-lucide="file-text"></i> Minhas Guias</a>
             </div>
             <div class="nav-section">
@@ -197,6 +197,8 @@
             <div class="alert" id="alert-upload"></div>
             <form onsubmit="enviarDocumento(event)">
                 <input type="hidden" id="upload-categoria">
+                <input type="hidden" id="upload-tipo-doc">
+                <div class="form-group"><label>Competência (opcional)</label><input type="text" id="upload-competencia" placeholder="MM/AAAA"></div>
                 <div class="form-group"><label>Descrição (opcional)</label><input type="text" id="upload-desc" placeholder="Ex: NF 123 - Outubro/2026"></div>
                 <div class="form-group"><label>Arquivo</label><input type="file" id="upload-file" required></div>
                 <button type="submit" class="btn-submit" style="width:100%;">Enviar Documento</button>
@@ -347,40 +349,46 @@ clientViews.pendencias = async function() {
 };
 
 // --- DOCUMENTOS ---
+const TIPOS_DOC_CLIENTE = ['NF-e', 'NFS-e', 'XML', 'PDF', 'Extrato', 'Comprovante', 'Folha', 'Contrato', 'Outros'];
+const STATUS_BADGE_CLI = {
+    'Enviado': 'badge-orange', 'Recebido': 'badge-green', 'Em análise': 'badge-orange', 'Aprovado': 'badge-green',
+    'Rejeitado': 'badge-grey', 'Necessita correção': 'badge-orange', 'Arquivado': 'badge-grey',
+    'pendente': 'badge-grey', 'recebido': 'badge-green'
+};
+
 clientViews.documentos = async function() {
     document.getElementById('content').innerHTML = `
-        <h1 class="page-title">Enviar Documentos</h1>
-        <p class="page-subtitle">Envie seus documentos para o escritório</p>
+        <h1 class="page-title">Central de Documentos</h1>
+        <p class="page-subtitle">Envie e acompanhe seus documentos contábeis</p>
         <div class="card">
             <h3>📤 Escolha o tipo de documento</h3>
             <div class="doc-grid">
-                <div class="doc-btn" onclick="abrirUpload('NF','Enviar Nota Fiscal')"><i data-lucide="receipt"></i><span>Enviar NF</span></div>
-                <div class="doc-btn" onclick="abrirUpload('PDF','Enviar PDF')"><i data-lucide="file-text"></i><span>Enviar PDF</span></div>
-                <div class="doc-btn" onclick="abrirUpload('XML','Enviar XML')"><i data-lucide="code"></i><span>Enviar XML</span></div>
-                <div class="doc-btn" onclick="abrirUpload('Comprovante','Enviar Comprovante')"><i data-lucide="receipt"></i><span>Enviar Comprovante</span></div>
-                <div class="doc-btn" onclick="abrirUpload('Extrato','Enviar Extrato Bancário')"><i data-lucide="landmark"></i><span>Enviar Extrato</span></div>
-                <div class="doc-btn" onclick="abrirUpload('Outros','Enviar Outros Documentos')"><i data-lucide="folder"></i><span>Enviar Outros</span></div>
+                ${TIPOS_DOC_CLIENTE.map(t => `<div class="doc-btn" onclick="abrirUpload('${t}','Enviar ${t}')"><i data-lucide="file-text"></i><span>${t}</span></div>`).join('')}
             </div>
         </div>
         <div class="card">
             <h3>📄 Meus Documentos</h3>
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Categoria</th><th>Descrição</th><th>Enviado por</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Tipo</th><th>Competência</th><th>Descrição</th><th>Enviado por</th><th>Status</th><th>Observação</th><th>Data</th><th>Ações</th></tr></thead>
                 <tbody id="docs-tbody"></tbody>
             </table></div>
         </div>`;
     try {
         const data = await api('/api/cliente/dashboard');
         const tb = document.getElementById('docs-tbody');
-        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento.</td></tr>'; return; }
+        if (data.documentos.length === 0) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum documento.</td></tr>'; return; }
         tb.innerHTML = data.documentos.map(d => {
             const isCliente = d.enviado_por === 'cliente';
+            const tipoDoc = d.tipo_documento || d.categoria || '—';
+            const badgeClass = STATUS_BADGE_CLI[d.status] || 'badge-grey';
             return `
             <tr>
-                <td><span class="badge badge-purple">${d.categoria || '—'}</span></td>
+                <td><span class="badge badge-purple">${tipoDoc}</span></td>
+                <td>${d.competencia || '—'}</td>
                 <td>${d.descricao || '—'}</td>
                 <td><span class="badge ${isCliente?'badge-green':'badge-grey'}">${isCliente?'Você':'Contador'}</span></td>
-                <td><span class="badge badge-${d.status==='recebido'?'green':'grey'}">${(d.status||'pendente').toUpperCase()}</span></td>
+                <td><span class="badge ${badgeClass}">${(d.status||'pendente').toUpperCase()}</span></td>
+                <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);" title="${(d.observacao||'').replace(/"/g,'&quot;')}">${d.observacao || '—'}</td>
                 <td style="color:var(--text-secondary);">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
                 <td style="display:flex;gap:6px;">
                     ${d.arquivonome ? `<a href="/api/documentos/download/${d.id}?token=${token}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">Baixar</a>` : ''}
@@ -388,13 +396,15 @@ clientViews.documentos = async function() {
                 </td>
             </tr>`;
         }).join('');
-    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="6" style="color:var(--text-muted);">Erro.</td></tr>'; }
+    } catch (e) { document.getElementById('docs-tbody').innerHTML = '<tr><td colspan="8" style="color:var(--text-muted);">Erro.</td></tr>'; }
     lucide.createIcons();
 };
 
 window.abrirUpload = function(cat, title) {
     document.getElementById('upload-categoria').value = cat;
+    document.getElementById('upload-tipo-doc').value = cat;
     document.getElementById('upload-title').textContent = title;
+    document.getElementById('upload-competencia').value = '';
     document.getElementById('modal-upload').classList.add('active');
     document.getElementById('modal-upload').style.display = 'flex';
 };
@@ -403,6 +413,8 @@ window.enviarDocumento = async function(e) {
     e.preventDefault();
     const fd = new FormData();
     fd.append('categoria', document.getElementById('upload-categoria').value);
+    fd.append('tipo_documento', document.getElementById('upload-tipo-doc').value);
+    fd.append('competencia', document.getElementById('upload-competencia').value);
     fd.append('descricao', document.getElementById('upload-desc').value);
     fd.append('arquivo', document.getElementById('upload-file').files[0]);
     try {
@@ -436,7 +448,7 @@ clientViews.guias = async function() {
         </div>
         <div class="card" style="padding:0;overflow:hidden;">
             <div style="overflow-x:auto;"><table class="data-table">
-                <thead><tr><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Descrição</th><th>Ações</th></tr></thead>
                 <tbody id="guias-tbody"></tbody>
             </table></div>
         </div>`;
@@ -452,20 +464,48 @@ clientViews.guias = async function() {
     function renderGuias(filtro) {
         const tb = document.getElementById('guias-tbody');
         const filtered = filtro ? allGuias.filter(g => g.tipoimposto === filtro) : allGuias;
-        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma guia encontrada.</td></tr>'; return; }
-        tb.innerHTML = filtered.map(g => `
+        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma guia encontrada.</td></tr>'; return; }
+        const statusBadge = {
+            'publicada': 'badge-blue', 'visualizada': 'badge-orange',
+            'baixada': 'badge-orange', 'paga': 'badge-green', 'vencida': 'badge-urgente',
+            'pendente': 'badge-orange', 'pago': 'badge-green'
+        };
+        const statusLabel = {
+            'publicada': 'PUBLICADA', 'visualizada': 'VISUALIZADA',
+            'baixada': 'BAIXADA', 'paga': 'PAGA', 'vencida': 'VENCIDA',
+            'pendente': 'PENDENTE', 'pago': 'PAGO'
+        };
+        tb.innerHTML = filtered.map(g => {
+            const st = g.status || 'pendente';
+            return `
             <tr>
                 <td style="font-weight:600;">${g.tipoimposto || '—'}</td>
                 <td>${g.competencia || '—'}</td>
                 <td style="color:var(--text-secondary);">${g.vencimento ? new Date(g.vencimento).toLocaleDateString('pt-BR') : '—'}</td>
                 <td style="font-weight:600;">R$ ${Number(g.valor||0).toFixed(2)}</td>
-                <td><span class="badge badge-${g.status==='pago'?'green':'orange'}">${(g.status||'pendente').toUpperCase()}</span></td>
+                <td><span class="badge ${statusBadge[st] || 'badge-orange'}">${statusLabel[st] || st.toUpperCase()}</span></td>
+                <td style="font-size:12px;color:var(--text-secondary);">${g.descricao || '—'}${g.observacao ? `<br><span style="color:var(--text-muted);">Obs: ${g.observacao}</span>` : ''}</td>
                 <td>
-                    ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix}')">PIX</button>` : ''}
+                    ${g.pix ? `<button class="btn-sm btn-sm-purple" onclick="copiarPix('${g.pix.replace(/'/g, "\\'")}')">PIX</button>` : ''}
                     ${g.arquivonome ? `<a href="/api/guias/download/${g.id}?token=${token}" target="_blank" class="btn-sm btn-sm-purple" style="text-decoration:none;">PDF</a>` : ''}
+                    <button class="btn-sm btn-sm-purple" onclick="verHistoricoGuiaCliente(${g.id})">Histórico</button>
                 </td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
     }
+    window.verHistoricoGuiaCliente = async function(id) {
+        try {
+            const hist = await api(`/api/cliente/guias/${id}/historico`);
+            const items = hist.map(h => `<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div style="font-weight:600;font-size:13px;">${h.acao}</div><div style="font-size:12px;color:var(--text-secondary);">${h.detalhe || ''}</div><div style="font-size:11px;color:var(--text-muted);">${new Date(h.data).toLocaleString('pt-BR')}</div></div>`).join('');
+            document.getElementById('content').insertAdjacentHTML('beforeend', `
+                <div class="modal-overlay active" id="modal-hist-guia-cli" onclick="if(event.target===this)this.remove()">
+                    <div class="modal-card" style="max-width:500px;">
+                        <div class="modal-header"><h3>Histórico da Guia</h3><button class="modal-close" onclick="document.getElementById('modal-hist-guia-cli').remove()">&times;</button></div>
+                        <div style="max-height:400px;overflow-y:auto;">${items || '<div style="padding:20px;text-align:center;color:var(--text-muted);">Sem histórico disponível.</div>'}</div>
+                    </div>
+                </div>`);
+        } catch (e) { alert(e.message); }
+    };
     renderGuias('');
 };
 
