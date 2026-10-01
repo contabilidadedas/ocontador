@@ -14,7 +14,9 @@ Uses PostgreSQL for persistence and JWT for auth. File uploads (PDFs) stored in 
 - `JWT_SECRET` — delivered via `/run/base44/app.env`; a development placeholder is generated if the user hasn't set one.
 
 ## Database
-- Tables (`contadores`, `empresas`, `guias`) are auto-created on server startup via `criarTabelasAutomaticamente()`.
+- Tables (`contadores`, `empresas`, `guias`, `documentos`, `documento_historico`, etc.) are auto-created on server startup via `criarTabelasAutomaticamente()`.
+- The `documentos` table has extended columns: `tipo_documento`, `competencia`, `observacao`, `usuario_envio` (added via ALTER TABLE IF NOT EXISTS).
+- `documento_historico` tracks all actions on each document (status changes, observations, uploads).
 - No manual migrations needed. Data persists in the `pgdata` named volume across restarts.
 
 ## Verify

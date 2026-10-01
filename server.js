@@ -258,6 +258,25 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS inadimplente BOOLEAN DEFAULT FALSE;`);
         await pool.query(`ALTER TABLE guias ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pendente';`);
 
+        // Garante colunas extras na tabela de documentos (Central de Documentos)
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(50);`);
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS competencia VARCHAR(20);`);
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS observacao TEXT;`);
+        await pool.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS usuario_envio VARCHAR(255);`);
+
+        // Tabela de histórico de documentos
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS documento_historico (
+                id SERIAL PRIMARY KEY,
+                documento_id INTEGER NOT NULL,
+                usuario_id INTEGER,
+                usuario_tipo VARCHAR(20),
+                acao VARCHAR(255),
+                detalhe TEXT,
+                data TIMESTAMP DEFAULT NOW()
+            );
+        `);
+
         // Tabela de configurações do sistema (valor mensal por contador, etc.)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS config_sistema (
@@ -287,6 +306,18 @@ async function criarTabelasAutomaticamente() {
         console.log("✅ Tabelas e colunas verificadas/criadas com sucesso!");
     } catch (err) {
         console.error("❌ Erro ao criar tabelas:", err.message);
+    }
+}
+
+// Helper: registra uma ação no histórico de um documento
+async function registrarHistoricoDocumento(documentoId, usuarioId, usuarioTipo, acao, detalhe) {
+    try {
+        await pool.query(
+            'INSERT INTO documento_historico (documento_id, usuario_id, usuario_tipo, acao, detalhe, data) VALUES ($1, $2, $3, $4, $5, NOW())',
+            [documentoId, usuarioId, usuarioTipo, acao, detalhe || null]
+        );
+    } catch (e) {
+        console.error('Erro ao registrar histórico de documento:', e.message);
     }
 }
 
@@ -835,10 +866,14 @@ app.get('/api/dashboard/pendencias-recentes', verificarTokenContador, async (req
 // ==========================================
 app.get('/api/documentos', verificarTokenContador, async (req, res) => {
     try {
-        const tipo = req.query.tipo;
+        const { tipo, tipo_documento, empresa_id, status } = req.query;
         let query = `SELECT d.*, e.razaosocial FROM documentos d LEFT JOIN empresas e ON d.empresa_id = e.id WHERE d.contador_id = $1`;
         const params = [req.contadorId];
-        if (tipo) { query += ' AND d.tipo = $2'; params.push(tipo); }
+        let idx = 2;
+        if (tipo) { query += ` AND d.tipo = $${idx++}`; params.push(tipo); }
+        if (tipo_documento) { query += ` AND d.tipo_documento = $${idx++}`; params.push(tipo_documento); }
+        if (empresa_id) { query += ` AND d.empresa_id = $${idx++}`; params.push(empresa_id); }
+        if (status) { query += ` AND d.status = $${idx++}`; params.push(status); }
         query += ' ORDER BY d.datacriacao DESC';
         const resultado = await pool.query(query, params);
         res.json(resultado.rows);
@@ -849,14 +884,19 @@ app.get('/api/documentos', verificarTokenContador, async (req, res) => {
 
 app.post('/api/documentos', verificarTokenContador, upload.single('arquivo'), async (req, res) => {
     try {
-        const { empresa_id, tipo, categoria, descricao } = req.body;
-        await pool.query(
-            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contador', NOW())`,
+        const { empresa_id, tipo, categoria, descricao, tipo_documento, competencia, observacao } = req.body;
+        const contador = await pool.query('SELECT nomeescritorio FROM contadores WHERE id = $1', [req.contadorId]);
+        const usuarioEnvio = contador.rows[0]?.nomeescritorio || 'Contador';
+        const statusInicial = tipo === 'pendente' ? 'pendente' : 'enviado';
+        const result = await pool.query(
+            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, tipo_documento, competencia, observacao, usuario_envio, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'contador', NOW()) RETURNING id`,
             [empresa_id || null, req.contadorId, tipo || 'recebido', categoria || '', descricao || '',
+             tipo_documento || categoria || '', competencia || '', observacao || '', usuarioEnvio,
              req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null,
-             tipo === 'pendente' ? 'pendente' : 'recebido']
+             statusInicial]
         );
+        await registrarHistoricoDocumento(result.rows[0].id, req.contadorId, 'contador', 'Documento criado', `${tipo_documento || categoria || 'Documento'} enviado pelo contador`);
         await registrarAuditoria(req.contadorId, 'contador', `Cadastrou documento: ${descricao || categoria}`, req);
         res.status(201).json({ mensagem: 'Documento salvo!' });
     } catch (erro) {
@@ -866,15 +906,18 @@ app.post('/api/documentos', verificarTokenContador, upload.single('arquivo'), as
 
 app.post('/api/documentos/cliente', verificarTokenCliente, upload.single('arquivo'), async (req, res) => {
     try {
-        const { categoria, descricao } = req.body;
-        const empresa = await pool.query('SELECT contador_id, contadorid FROM empresas WHERE id = $1', [req.empresaId]);
+        const { categoria, descricao, tipo_documento, competencia } = req.body;
+        const empresa = await pool.query('SELECT contador_id, contadorid, razaosocial FROM empresas WHERE id = $1', [req.empresaId]);
         const contadorId = empresa.rows[0]?.contador_id || empresa.rows[0]?.contadorid;
-        await pool.query(
-            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
-             VALUES ($1, $2, 'recebido', $3, $4, $5, $6, $7, 'recebido', 'cliente', NOW())`,
+        const usuarioEnvio = empresa.rows[0]?.razaosocial || 'Cliente';
+        const result = await pool.query(
+            `INSERT INTO documentos (empresa_id, contador_id, tipo, categoria, descricao, tipo_documento, competencia, usuario_envio, arquivonome, arquivodados, arquivotipo, status, enviado_por, datacriacao)
+             VALUES ($1, $2, 'recebido', $3, $4, $5, $6, $7, $8, $9, $10, 'enviado', 'cliente', NOW()) RETURNING id`,
             [req.empresaId, contadorId, categoria || '', descricao || '',
+             tipo_documento || categoria || '', competencia || '', usuarioEnvio,
              req.file ? req.file.originalname : null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null]
         );
+        await registrarHistoricoDocumento(result.rows[0].id, req.empresaId, 'cliente', 'Documento enviado', `${tipo_documento || categoria || 'Documento'} enviado pelo cliente`);
         await registrarAuditoria(req.empresaId, 'cliente', `Enviou documento: ${descricao || categoria}`, req);
         res.status(201).json({ mensagem: 'Documento enviado!' });
     } catch (erro) {
@@ -885,7 +928,7 @@ app.post('/api/documentos/cliente', verificarTokenCliente, upload.single('arquiv
 app.get('/api/documentos/cliente', verificarTokenCliente, async (req, res) => {
     try {
         const resultado = await pool.query(
-            'SELECT id, categoria, descricao, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC',
+            'SELECT id, categoria, descricao, tipo_documento, competencia, observacao, usuario_envio, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC',
             [req.empresaId]
         );
         res.json(resultado.rows);
@@ -918,8 +961,41 @@ app.put('/api/documentos/:id/status', verificarTokenContador, async (req, res) =
     try {
         const { id } = req.params;
         const { status } = req.body;
+        const anterior = await pool.query('SELECT status FROM documentos WHERE id = $1 AND contador_id = $2', [id, req.contadorId]);
+        if (anterior.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado.' });
         await pool.query('UPDATE documentos SET status = $1 WHERE id = $2 AND contador_id = $3', [status, id, req.contadorId]);
+        await registrarHistoricoDocumento(id, req.contadorId, 'contador', 'Status alterado', `De "${anterior.rows[0].status}" para "${status}"`);
         res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Registrar observação em um documento
+app.put('/api/documentos/:id/observacao', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { observacao } = req.body;
+        const doc = await pool.query('SELECT id FROM documentos WHERE id = $1 AND contador_id = $2', [id, req.contadorId]);
+        if (doc.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado.' });
+        await pool.query('UPDATE documentos SET observacao = $1 WHERE id = $2 AND contador_id = $3', [observacao || '', id, req.contadorId]);
+        await registrarHistoricoDocumento(id, req.contadorId, 'contador', 'Observação registrada', observacao || '(vazia)');
+        res.json({ mensagem: 'Observação salva.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Histórico de um documento
+app.get('/api/documentos/:id/historico', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const doc = await pool.query('SELECT id FROM documentos WHERE id = $1 AND contador_id = $2', [id, req.contadorId]);
+        if (doc.rows.length === 0) return res.status(404).json({ erro: 'Documento não encontrado.' });
+        const resultado = await pool.query(
+            'SELECT * FROM documento_historico WHERE documento_id = $1 ORDER BY data DESC', [id]
+        );
+        res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
@@ -1450,7 +1526,7 @@ app.get('/api/cliente/dashboard', verificarTokenCliente, async (req, res) => {
             pool.query('SELECT * FROM checklist_mensal WHERE empresa_id = $1 ORDER BY datacriacao DESC', [eid]),
             pool.query('SELECT id, cnpj, tipoimposto, competencia, valor, vencimento, pix, arquivonome, status, datacriacao FROM guias WHERE cnpj = $1 ORDER BY datacriacao DESC', [req.empresaCnpj]),
             pool.query('SELECT * FROM avisos WHERE empresa_id = $1 ORDER BY datacriacao DESC LIMIT 5', [eid]),
-            pool.query('SELECT id, categoria, descricao, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC', [eid])
+            pool.query('SELECT id, categoria, descricao, tipo_documento, competencia, observacao, usuario_envio, arquivonome, status, enviado_por, datacriacao FROM documentos WHERE empresa_id = $1 ORDER BY datacriacao DESC', [eid])
         ]);
         res.json({
             pendencias: pendencias.rows,
