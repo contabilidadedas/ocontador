@@ -264,6 +264,7 @@
             <div class="nav-section">
                 <div class="nav-section-title">Obrigações</div>
                 <a class="nav-item" data-view="calendario" onclick="navigate('calendario')"><i data-lucide="calendar"></i> Calendário de Obrigações</a>
+                <a class="nav-item" data-view="central-pendencias" onclick="navigate('central-pendencias')"><i data-lucide="bell-ring"></i> Central de Pendências</a>
                 <a class="nav-item" data-view="pendencias" onclick="navigate('pendencias')"><i data-lucide="alert-triangle"></i> Pendências</a>
             </div>
 
@@ -568,6 +569,7 @@ views.dashboard = async function() {
         ${isAdmin ? '<div id="admin-vendas-panel"></div>' : ''}
         <div class="metrics-grid" id="metrics-grid"></div>
         <div class="status-row" id="status-row"></div>
+        <div id="central-resumo-widget"></div>
         <div class="table-card" style="margin-bottom:28px;">
             <div class="table-header">
                 <div><h3>Ganhos Mensais</h3><p>Recebidos vs. a receber nos últimos 6 meses</p></div>
@@ -591,10 +593,11 @@ views.dashboard = async function() {
         // Painel de vendas do admin
         if (isAdmin) carregarPainelVendas();
 
-        const [stats, pendencias, ganhosMensais] = await Promise.all([
+        const [stats, pendencias, ganhosMensais, centralData] = await Promise.all([
             api('/api/dashboard/stats'),
             api('/api/dashboard/pendencias-recentes'),
-            api('/api/dashboard/ganhos-mensais')
+            api('/api/dashboard/ganhos-mensais'),
+            api('/api/central-pendencias').catch(() => null)
         ]);
 
         const fmtMoeda = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -676,6 +679,48 @@ views.dashboard = async function() {
                     }
                 }
             });
+        }
+
+        // --- Widget de resumo da Central de Pendências ---
+        const widgetDiv = document.getElementById('central-resumo-widget');
+        if (widgetDiv && centralData) {
+            const ct = centralData.totais;
+            const totalAtencao = ct.documentosSolicitados + ct.documentosAguardando + ct.guiasAguardandoPublicacao + ct.guiasProximasVencimento + ct.mensagensNaoLidas + ct.tarefasPendentes + ct.pendencias + ct.checklistPendente;
+            const itens = [];
+            if (ct.guiasProximasVencimento > 0) itens.push({ icon: 'calendar-clock', label: 'Guias vencendo', count: ct.guiasProximasVencimento, color: '#f87171', view: 'central-pendencias' });
+            if (ct.documentosAguardando > 0) itens.push({ icon: 'file-search', label: 'Docs aguardando análise', count: ct.documentosAguardando, color: '#60a5fa', view: 'central-pendencias' });
+            if (ct.mensagensNaoLidas > 0) itens.push({ icon: 'mail-warning', label: 'Mensagens não lidas', count: ct.mensagensNaoLidas, color: '#fbbf24', view: 'central-pendencias' });
+            if (ct.guiasAguardandoPublicacao > 0) itens.push({ icon: 'upload-cloud', label: 'Guias a publicar', count: ct.guiasAguardandoPublicacao, color: '#c4b5fd', view: 'central-pendencias' });
+            if (ct.documentosSolicitados > 0) itens.push({ icon: 'file-clock', label: 'Docs solicitados', count: ct.documentosSolicitados, color: '#fbbf24', view: 'central-pendencias' });
+            if (ct.pendencias > 0) itens.push({ icon: 'alert-triangle', label: 'Pendências', count: ct.pendencias, color: '#f87171', view: 'central-pendencias' });
+            if (ct.tarefasPendentes > 0) itens.push({ icon: 'list-checks', label: 'Tarefas CRM', count: ct.tarefasPendentes, color: '#c4b5fd', view: 'central-pendencias' });
+            if (ct.checklistPendente > 0) itens.push({ icon: 'clipboard-list', label: 'Checklist pendente', count: ct.checklistPendente, color: '#fbbf24', view: 'central-pendencias' });
+
+            if (totalAtencao > 0) {
+                widgetDiv.innerHTML = `
+                    <div class="table-card" style="margin-bottom:28px;border-left:4px solid var(--accent-purple);">
+                        <div class="table-header">
+                            <div><h3>🔔 Central de Pendências</h3><p>${totalAtencao} item${totalAtencao > 1 ? 'ns' : ''} precisa${totalAtencao > 1 ? 'm' : ''} da sua atenção</p></div>
+                            <button class="btn-sm btn-sm-purple" onclick="navigate('central-pendencias')">Ver Central Completa</button>
+                        </div>
+                        <div style="display:flex;gap:12px;flex-wrap:wrap;padding:16px 20px;">
+                            ${itens.map(i => `<div onclick="navigate('central-pendencias')" style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg-body);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='${i.color}'" onmouseout="this.style.borderColor='var(--border)'">
+                                <i data-lucide="${i.icon}" style="width:18px;height:18px;color:${i.color};"></i>
+                                <span style="font-size:13px;font-weight:500;">${i.label}</span>
+                                <span style="font-size:14px;font-weight:700;color:${i.color};">${i.count}</span>
+                            </div>`).join('')}
+                        </div>
+                    </div>`;
+            } else {
+                widgetDiv.innerHTML = `
+                    <div class="table-card" style="margin-bottom:28px;">
+                        <div style="display:flex;align-items:center;gap:12px;padding:20px;">
+                            <i data-lucide="check-circle" style="width:24px;height:24px;color:#4ade80;"></i>
+                            <div><span style="font-weight:600;">Central de Pendências em dia!</span> <span style="color:var(--text-muted);font-size:13px;">Nenhuma ação necessária no momento.</span></div>
+                            <button class="btn-sm btn-sm-purple" style="margin-left:auto;" onclick="navigate('central-pendencias')">Ver Central</button>
+                        </div>
+                    </div>`;
+            }
         }
 
         const tb = document.getElementById('pendencias-tbody');
@@ -1128,6 +1173,199 @@ views.calendario = async function() {
 };
 
 // --- PENDÊNCIAS ---
+// --- CENTRAL DE PENDÊNCIAS E NOTIFICAÇÕES ---
+views['central-pendencias'] = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Central de Pendências e Notificações</h1>
+        <p class="page-subtitle">Tudo que precisa da sua atenção em um só lugar</p>
+        <div id="central-loading" style="text-align:center;padding:60px;color:var(--text-muted);">Carregando...</div>
+        <div id="central-content" style="display:none;"></div>`;
+    try {
+        const data = await api('/api/central-pendencias');
+        const t = data.totais;
+        const totalGeral = t.documentosSolicitados + t.documentosAguardando + t.guiasAguardandoPublicacao + t.guiasProximasVencimento + t.mensagensNaoLidas + t.tarefasPendentes + t.pendencias + t.checklistPendente;
+
+        const fmtData = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+        const fmtValor = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const diasVencer = d => {
+            if (!d) return '';
+            const diff = Math.ceil((new Date(d) - new Date()) / 86400000);
+            if (diff < 0) return `<span style="color:#f87171;font-weight:600;">Vencida</span>`;
+            if (diff === 0) return `<span style="color:#fbbf24;font-weight:600;">Hoje</span>`;
+            return `<span style="color:${diff <= 3 ? '#f87171' : '#fbbf24'};">${diff} dia${diff > 1 ? 's' : ''}</span>`;
+        };
+
+        let html = '';
+
+        // Resumo com cards
+        html += `<div class="metrics-grid" style="margin-bottom:28px;">`;
+        const cards = [
+            { label: 'Docs. Solicitados', value: t.documentosSolicitados, icon: 'file-clock', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
+            { label: 'Docs. Aguardando Análise', value: t.documentosAguardando, icon: 'file-search', color: 'rgba(59,130,246,0.15)', iconColor: '#60a5fa' },
+            { label: 'Guias a Publicar', value: t.guiasAguardandoPublicacao, icon: 'upload-cloud', color: 'rgba(139,92,246,0.15)', iconColor: '#c4b5fd' },
+            { label: 'Guias Vencendo', value: t.guiasProximasVencimento, icon: 'calendar-clock', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' },
+            { label: 'Mensagens Não Lidas', value: t.mensagensNaoLidas, icon: 'mail-warning', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
+            { label: 'Tarefas Pendentes', value: t.tarefasPendentes, icon: 'list-checks', color: 'rgba(139,92,246,0.15)', iconColor: '#c4b5fd' },
+            { label: 'Pendências', value: t.pendencias, icon: 'alert-triangle', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' },
+            { label: 'Checklist Pendente', value: t.checklistPendente, icon: 'clipboard-list', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' }
+        ];
+        html += cards.map(c => `
+            <div class="metric-card">
+                <div class="metric-card-top">
+                    <div class="metric-label">${c.label}</div>
+                    <div class="metric-icon" style="background:${c.color};color:${c.iconColor};"><i data-lucide="${c.icon}"></i></div>
+                </div>
+                <div class="metric-value">${c.value}</div>
+            </div>`).join('');
+        html += `</div>`;
+
+        if (totalGeral === 0) {
+            html += `<div class="table-card"><div style="text-align:center;padding:60px;color:var(--text-muted);"><i data-lucide="check-circle" style="width:48px;height:48px;color:#4ade80;margin-bottom:16px;"></i><h3 style="font-size:18px;color:#4ade80;">Tudo em dia! 🎉</h3><p style="margin-top:8px;">Nenhuma pendência no momento.</p></div></div>`;
+        } else {
+            // Documentos solicitados
+            if (data.documentosSolicitados.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>📄 Documentos Solicitados</h3><p>Aguardando envio pelo cliente</p></div><span class="badge badge-urgente">${data.documentosSolicitados.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Documento</th><th>Competência</th><th>Solicitado em</th></tr></thead>
+                        <tbody>${data.documentosSolicitados.map(d => `<tr>
+                            <td>${d.razaosocial || '—'}</td>
+                            <td style="font-weight:500;">${d.tipo_documento || d.categoria || d.descricao || '—'}</td>
+                            <td>${d.competencia || '—'}</td>
+                            <td class="text-secondary">${fmtData(d.datacriacao)}</td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Documentos aguardando análise
+            if (data.documentosAguardando.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>🔍 Documentos Aguardando Análise</h3><p>Recebidos do cliente, precisam de revisão</p></div><span class="badge badge-blue">${data.documentosAguardando.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Documento</th><th>Competência</th><th>Status</th><th>Recebido em</th></tr></thead>
+                        <tbody>${data.documentosAguardando.map(d => `<tr>
+                            <td>${d.razaosocial || '—'}</td>
+                            <td style="font-weight:500;">${d.tipo_documento || d.categoria || d.descricao || '—'}</td>
+                            <td>${d.competencia || '—'}</td>
+                            <td><span class="badge badge-orange">${(d.status || 'enviado').toUpperCase()}</span></td>
+                            <td class="text-secondary">${fmtData(d.datacriacao)}</td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Guias aguardando publicação
+            if (data.guiasAguardandoPublicacao.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>📤 Guias Aguardando Publicação</h3><p>Em rascunho, prontas para publicar</p></div><span class="badge badge-purple">${data.guiasAguardandoPublicacao.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Ações</th></tr></thead>
+                        <tbody>${data.guiasAguardandoPublicacao.map(g => `<tr>
+                            <td>${g.razaosocial || '—'}</td>
+                            <td style="font-weight:600;">${g.tipoimposto || '—'}</td>
+                            <td>${g.competencia || '—'}</td>
+                            <td class="text-secondary">${fmtData(g.vencimento)}</td>
+                            <td style="font-weight:600;">${fmtValor(g.valor)}</td>
+                            <td><button class="btn-sm btn-sm-green" onclick="navigate('guias')">Ir para Guias</button></td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Guias próximas do vencimento
+            if (data.guiasProximasVencimento.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>⏰ Guias Próximas do Vencimento</h3><p>Vencem nos próximos 7 dias</p></div><span class="badge badge-urgente">${data.guiasProximasVencimento.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Imposto</th><th>Competência</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Restam</th></tr></thead>
+                        <tbody>${data.guiasProximasVencimento.map(g => `<tr>
+                            <td>${g.razaosocial || '—'}</td>
+                            <td style="font-weight:600;">${g.tipoimposto || '—'}</td>
+                            <td>${g.competencia || '—'}</td>
+                            <td class="text-secondary">${fmtData(g.vencimento)}</td>
+                            <td style="font-weight:600;">${fmtValor(g.valor)}</td>
+                            <td><span class="badge badge-${g.status === 'publicada' || g.status === 'visualizada' ? 'blue' : 'grey'}">${(g.status || 'pendente').toUpperCase()}</span></td>
+                            <td>${diasVencer(g.vencimento)}</td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Mensagens não lidas
+            if (data.mensagensNaoLidas.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>💬 Mensagens Não Lidas</h3><p>Novas mensagens dos clientes</p></div><span class="badge badge-atencao">${data.mensagensNaoLidas.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Mensagem</th><th>Recebida em</th><th>Ações</th></tr></thead>
+                        <tbody>${data.mensagensNaoLidas.map(m => `<tr>
+                            <td>${m.razaosocial || '—'}</td>
+                            <td style="max-width:400px;">${esc(m.mensagem).substring(0, 100)}${m.mensagem.length > 100 ? '...' : ''}</td>
+                            <td class="text-secondary">${new Date(m.datacriacao).toLocaleString('pt-BR')}</td>
+                            <td><button class="btn-sm btn-sm-blue" onclick="navigate('chat')">Ver Chat</button></td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Tarefas pendentes (CRM)
+            if (data.tarefasPendentes.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>✅ Tarefas Pendentes</h3><p>Tarefas do CRM em aberto</p></div><span class="badge badge-purple">${data.tarefasPendentes.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Tarefa</th><th>Prioridade</th><th>Prazo</th></tr></thead>
+                        <tbody>${data.tarefasPendentes.map(t => `<tr>
+                            <td>${t.razaosocial || '—'}</td>
+                            <td style="font-weight:500;">${esc(t.descricao)}</td>
+                            <td><span class="badge badge-${t.prioridade}">${(t.prioridade || 'media').toUpperCase()}</span></td>
+                            <td class="text-secondary">${fmtData(t.prazo)}</td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Pendências gerais
+            if (data.pendencias.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>⚠️ Pendências Gerais</h3><p>Itens que precisam de ação</p></div><span class="badge badge-urgente">${data.pendencias.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Descrição</th><th>Prioridade</th><th>Prazo</th><th>Ações</th></tr></thead>
+                        <tbody>${data.pendencias.map(p => `<tr>
+                            <td>${p.razaosocial || '—'}</td>
+                            <td style="font-weight:500;">${esc(p.descricao)}</td>
+                            <td><span class="badge badge-${p.prioridade}">${(p.prioridade || 'media').toUpperCase()}</span></td>
+                            <td class="text-secondary">${fmtData(p.prazo)}</td>
+                            <td><button class="btn-sm btn-sm-green" onclick="resolverPendencia(${p.id})">Resolver</button></td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+
+            // Checklist pendente
+            if (data.checklistPendente.length > 0) {
+                html += `<div class="table-card" style="margin-bottom:20px;">
+                    <div class="table-header"><div><h3>📋 Checklist Mensal Pendente</h3><p>Itens do checklist não concluídos</p></div><span class="badge badge-atencao">${data.checklistPendente.length}</span></div>
+                    <div style="overflow-x:auto;"><table class="data-table">
+                        <thead><tr><th>Empresa</th><th>Item</th><th>Competência</th></tr></thead>
+                        <tbody>${data.checklistPendente.map(c => `<tr>
+                            <td>${c.razaosocial || '—'}</td>
+                            <td style="font-weight:500;">${esc(c.item)}</td>
+                            <td>${c.competencia || '—'}</td>
+                        </tr>`).join('')}</tbody>
+                    </table></div>
+                </div>`;
+            }
+        }
+
+        document.getElementById('central-loading').style.display = 'none';
+        document.getElementById('central-content').style.display = 'block';
+        document.getElementById('central-content').innerHTML = html;
+    } catch (e) {
+        document.getElementById('central-loading').innerHTML = '<div style="color:#f87171;">Erro ao carregar central de pendências.</div>';
+    }
+    lucide.createIcons();
+};
+
 views.pendencias = async function() {
     await carregarEmpresasCache();
     document.getElementById('content').innerHTML = `
