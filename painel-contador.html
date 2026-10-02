@@ -252,6 +252,8 @@
                 <a class="nav-item" data-view="docs-recebidos" onclick="navigate('docs-recebidos')"><i data-lucide="file-check"></i> Documentos Recebidos</a>
                 <a class="nav-item" data-view="docs-pendentes" onclick="navigate('docs-pendentes')"><i data-lucide="file-clock"></i> Documentos Pendentes</a>
                 <a class="nav-item" data-view="notas-fiscais" onclick="navigate('notas-fiscais')"><i data-lucide="receipt"></i> Notas Fiscais</a>
+                <a class="nav-item" data-view="ordens-servico" onclick="navigate('ordens-servico')"><i data-lucide="clipboard-list"></i> Ordens de Serviço</a>
+                <a class="nav-item" data-view="notas-fiscais-prep" onclick="navigate('notas-fiscais-prep')"><i data-lucide="file-pen-line"></i> Notas Fiscais (Prep.)</a>
             </div>
 
             <div class="nav-section">
@@ -2016,6 +2018,423 @@ function showDynamicModal(title, body) {
     modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h3>${title}</h3><button class="modal-close" onclick="fecharModal('modal-dynamic')">&times;</button></div>${body}</div>`;
     modal.classList.add('active');
     lucide.createIcons();
+}
+
+// ==========================================
+// ETAPA 9 — ORDENS DE SERVIÇO E NOTAS FISCAIS
+// ==========================================
+const STATUS_OS = { 'rascunho': 'grey', 'aberta': 'blue', 'em_andamento': 'orange', 'concluida': 'green', 'cancelada': 'red' };
+const STATUS_OS_LABEL = { 'rascunho': 'Rascunho', 'aberta': 'Aberta', 'em_andamento': 'Em Andamento', 'concluida': 'Concluída', 'cancelada': 'Cancelada' };
+const STATUS_FISCAL = { 'rascunho': 'grey', 'aguardando_conferencia': 'orange', 'pronta_para_emissao': 'blue', 'em_processamento': 'purple', 'autorizada': 'green', 'rejeitada': 'red', 'cancelada': 'red' };
+const STATUS_FISCAL_LABEL = { 'rascunho': 'Rascunho', 'aguardando_conferencia': 'Aguardando Conferência', 'pronta_para_emissao': 'Pronta para Emissão', 'em_processamento': 'Em Processamento', 'autorizada': 'Autorizada', 'rejeitada': 'Rejeitada', 'cancelada': 'Cancelada' };
+
+views['ordens-servico'] = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Ordens de Serviço</h1>
+        <p class="page-subtitle">Gerencie ordens de serviço e prepare notas fiscais</p>
+        <div class="table-card">
+            <div class="table-header" style="flex-wrap:wrap;gap:10px;">
+                <div><h3>Ordens de Serviço</h3></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <select id="os-filtro-empresa" onchange="carregarOS()" style="padding:6px 10px;border-radius:8px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-light);font-size:13px;">
+                        <option value="">Todas as empresas</option>
+                        ${empresasCache.map(e => `<option value="${e.id}">${esc(e.razaosocial)}</option>`).join('')}
+                    </select>
+                    <select id="os-filtro-status" onchange="carregarOS()" style="padding:6px 10px;border-radius:8px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-light);font-size:13px;">
+                        <option value="">Todos os status</option>
+                        ${Object.entries(STATUS_OS_LABEL).map(([k,v]) => `<option value="${k}">${v}</option>`).join('')}
+                    </select>
+                    <button class="btn-sm btn-sm-blue" onclick="abrirModalOS()">+ Nova OS</button>
+                </div>
+            </div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Empresa</th><th>Cliente</th><th>CPF/CNPJ</th><th>Serviço</th><th>Valor Total</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="os-tbody"></tbody>
+            </table></div>
+        </div>`;
+    carregarOS();
+};
+
+async function carregarOS() {
+    const tb = document.getElementById('os-tbody');
+    if (!tb) return;
+    const emp = document.getElementById('os-filtro-empresa')?.value || '';
+    const status = document.getElementById('os-filtro-status')?.value || '';
+    let url = '/api/ordens-servico';
+    const params = new URLSearchParams();
+    if (emp) params.append('empresa_id', emp);
+    if (status) params.append('status', status);
+    if (params.toString()) url += '?' + params.toString();
+    try {
+        const ordens = await api(url);
+        if (ordens.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhuma ordem de serviço encontrada.'); return; }
+        const fmtMoeda = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        tb.innerHTML = ordens.map(o => `
+            <tr>
+                <td style="font-weight:500;">${esc(o.empresa_nome) || '—'}</td>
+                <td>${esc(o.cliente_nome) || '—'}</td>
+                <td class="text-secondary" style="font-family:monospace;font-size:13px;">${esc(o.cliente_cpf_cnpj) || '—'}</td>
+                <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(o.servico_descricao||'')}">${esc(o.servico_descricao) || '—'}</td>
+                <td style="font-weight:600;">${fmtMoeda(o.valor_total)}</td>
+                <td><span class="badge badge-${STATUS_OS[o.status]||'grey'}">${STATUS_OS_LABEL[o.status]||o.status}</span></td>
+                <td style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button class="btn-sm btn-sm-blue" onclick="abrirModalEmitirNF(${o.id})">Emitir Nota Fiscal</button>
+                    <button class="btn-sm btn-sm-green" onclick="editarOS(${o.id})">Editar</button>
+                    <button class="btn-sm btn-sm-red" onclick="excluirOS(${o.id})">Excluir</button>
+                </td>
+            </tr>`).join('');
+    } catch (e) { tb.innerHTML = emptyRow(7, 'Erro ao carregar ordens de serviço.'); }
+}
+
+function abrirModalOS() {
+    if (empresasCache.length === 0) { alert('Cadastre uma empresa primeiro.'); return; }
+    showDynamicModal('Nova Ordem de Serviço', `
+        <form onsubmit="salvarOS(event)">
+            <div class="form-group"><label>Empresa *</label><select id="_os_empresa" required>
+                ${empresasCache.map(e => `<option value="${e.id}">${esc(e.razaosocial)}</option>`).join('')}
+            </select></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Cliente / Destinatário</label><input type="text" id="_os_cliente_nome" placeholder="Nome do cliente"></div>
+                <div class="form-group"><label>CPF / CNPJ</label><input type="text" id="_os_cliente_cpf_cnpj" placeholder="000.000.000-00"></div>
+            </div>
+            <div class="form-group"><label>Endereço</label><input type="text" id="_os_cliente_endereco" placeholder="Endereço completo"></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Município</label><input type="text" id="_os_cliente_municipio" placeholder="Cidade"></div>
+                <div class="form-group"><label>UF</label><input type="text" id="_os_cliente_uf" maxlength="2" placeholder="SP"></div>
+            </div>
+            <div class="form-group"><label>Descrição do Serviço</label><textarea id="_os_servico_descricao" rows="3" placeholder="Descrição do serviço prestado..."></textarea></div>
+            <div class="form-grid">
+                <div class="form-group"><label>Quantidade</label><input type="number" id="_os_quantidade" step="0.01" value="1"></div>
+                <div class="form-group"><label>Valor Unitário (R$)</label><input type="number" id="_os_valor_unitario" step="0.01" value="0"></div>
+            </div>
+            <div class="form-grid">
+                <div class="form-group"><label>Desconto (R$)</label><input type="number" id="_os_desconto" step="0.01" value="0"></div>
+                <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="_os_valor_total" step="0.01" value="0"></div>
+            </div>
+            <div class="form-group"><label>Observações</label><textarea id="_os_observacoes" rows="2" placeholder="Observações..."></textarea></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Criar OS</button></div>
+        </form>`);
+}
+
+async function salvarOS(e) {
+    e.preventDefault();
+    const body = {
+        empresa_id: document.getElementById('_os_empresa').value,
+        cliente_nome: document.getElementById('_os_cliente_nome').value,
+        cliente_cpf_cnpj: document.getElementById('_os_cliente_cpf_cnpj').value,
+        cliente_endereco: document.getElementById('_os_cliente_endereco').value,
+        cliente_municipio: document.getElementById('_os_cliente_municipio').value,
+        cliente_uf: document.getElementById('_os_cliente_uf').value,
+        servico_descricao: document.getElementById('_os_servico_descricao').value,
+        quantidade: document.getElementById('_os_quantidade').value,
+        valor_unitario: document.getElementById('_os_valor_unitario').value,
+        desconto: document.getElementById('_os_desconto').value,
+        valor_total: document.getElementById('_os_valor_total').value,
+        observacoes: document.getElementById('_os_observacoes').value
+    };
+    try { await api('/api/ordens-servico', { method: 'POST', body: JSON.stringify(body) }); fecharModal('modal-dynamic'); carregarOS(); } catch (err) { alert(err.message); }
+}
+
+async function editarOS(id) {
+    try {
+        const os = await api(`/api/ordens-servico/${id}`);
+        showDynamicModal('Editar Ordem de Serviço', `
+            <form onsubmit="atualizarOS(event, ${id})">
+                <div class="form-group"><label>Empresa</label><input type="text" value="${esc(os.empresa_nome||'')}" readonly style="opacity:0.6;"></div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Cliente / Destinatário</label><input type="text" id="_os_cliente_nome" value="${esc(os.cliente_nome||'')}"></div>
+                    <div class="form-group"><label>CPF / CNPJ</label><input type="text" id="_os_cliente_cpf_cnpj" value="${esc(os.cliente_cpf_cnpj||'')}"></div>
+                </div>
+                <div class="form-group"><label>Endereço</label><input type="text" id="_os_cliente_endereco" value="${esc(os.cliente_endereco||'')}"></div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Município</label><input type="text" id="_os_cliente_municipio" value="${esc(os.cliente_municipio||'')}"></div>
+                    <div class="form-group"><label>UF</label><input type="text" id="_os_cliente_uf" maxlength="2" value="${esc(os.cliente_uf||'')}"></div>
+                </div>
+                <div class="form-group"><label>Descrição do Serviço</label><textarea id="_os_servico_descricao" rows="3">${esc(os.servico_descricao||'')}</textarea></div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Quantidade</label><input type="number" id="_os_quantidade" step="0.01" value="${os.quantidade||1}"></div>
+                    <div class="form-group"><label>Valor Unitário (R$)</label><input type="number" id="_os_valor_unitario" step="0.01" value="${os.valor_unitario||0}"></div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group"><label>Desconto (R$)</label><input type="number" id="_os_desconto" step="0.01" value="${os.desconto||0}"></div>
+                    <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="_os_valor_total" step="0.01" value="${os.valor_total||0}"></div>
+                </div>
+                <div class="form-group"><label>Status</label><select id="_os_status">${Object.entries(STATUS_OS_LABEL).map(([k,v]) => `<option value="${k}" ${os.status===k?'selected':''}>${v}</option>`).join('')}</select></div>
+                <div class="form-group"><label>Observações</label><textarea id="_os_observacoes" rows="2">${esc(os.observacoes||'')}</textarea></div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;"><button type="button" class="btn-cancel" onclick="fecharModal('modal-dynamic')">Cancelar</button><button type="submit" class="btn-submit">Salvar</button></div>
+            </form>`);
+    } catch (e) { alert(e.message); }
+}
+
+async function atualizarOS(e, id) {
+    e.preventDefault();
+    const body = {
+        cliente_nome: document.getElementById('_os_cliente_nome').value,
+        cliente_cpf_cnpj: document.getElementById('_os_cliente_cpf_cnpj').value,
+        cliente_endereco: document.getElementById('_os_cliente_endereco').value,
+        cliente_municipio: document.getElementById('_os_cliente_municipio').value,
+        cliente_uf: document.getElementById('_os_cliente_uf').value,
+        servico_descricao: document.getElementById('_os_servico_descricao').value,
+        quantidade: document.getElementById('_os_quantidade').value,
+        valor_unitario: document.getElementById('_os_valor_unitario').value,
+        desconto: document.getElementById('_os_desconto').value,
+        valor_total: document.getElementById('_os_valor_total').value,
+        status: document.getElementById('_os_status').value,
+        observacoes: document.getElementById('_os_observacoes').value
+    };
+    try { await api(`/api/ordens-servico/${id}`, { method: 'PUT', body: JSON.stringify(body) }); fecharModal('modal-dynamic'); carregarOS(); } catch (err) { alert(err.message); }
+}
+
+async function excluirOS(id) {
+    if (!confirm('Excluir esta ordem de serviço?')) return;
+    try { await api(`/api/ordens-servico/${id}`, { method: 'DELETE' }); carregarOS(); } catch (e) { alert(e.message); }
+}
+
+// --- EMITIR NOTA FISCAL (a partir da OS) ---
+function abrirModalEmitirNF(osId) {
+    showDynamicModal('Emitir Nota Fiscal', `
+        <div style="text-align:center;padding:20px 0;">
+            <i data-lucide="file-pen-line" style="width:48px;height:48px;color:var(--accent-blue);margin-bottom:16px;"></i>
+            <h3 style="margin-bottom:8px;">Preparar Documento Fiscal</h3>
+            <p style="color:var(--text-secondary);font-size:14px;margin-bottom:24px;">Selecione o tipo de documento fiscal que deseja preparar a partir desta Ordem de Serviço.</p>
+            <div style="display:flex;gap:16px;justify-content:center;">
+                <button onclick="prepararNF(${osId}, 'NF-e')" style="background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:12px;padding:20px 32px;cursor:pointer;transition:all 0.15s;color:#60a5fa;font-size:16px;font-weight:700;" onmouseover="this.style.background='rgba(59,130,246,0.25)'" onmouseout="this.style.background='rgba(59,130,246,0.15)'">
+                    <i data-lucide="file-text" style="width:32px;height:32px;display:block;margin:0 auto 8px;"></i>
+                    NF-e
+                    <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:4px;">Nota Fiscal Eletrônica</div>
+                </button>
+                <button onclick="prepararNF(${osId}, 'NFS-e')" style="background:rgba(111,66,193,0.15);border:1px solid rgba(111,66,193,0.3);border-radius:12px;padding:20px 32px;cursor:pointer;transition:all 0.15s;color:#a78bfa;font-size:16px;font-weight:700;" onmouseover="this.style.background='rgba(111,66,193,0.25)'" onmouseout="this.style.background='rgba(111,66,193,0.15)'">
+                    <i data-lucide="file-text" style="width:32px;height:32px;display:block;margin:0 auto 8px;"></i>
+                    NFS-e
+                    <div style="font-size:11px;font-weight:400;color:var(--text-muted);margin-top:4px;">Nota Fiscal de Serviço</div>
+                </button>
+            </div>
+        </div>`);
+    lucide.createIcons();
+}
+
+async function prepararNF(osId, tipo) {
+    try {
+        const result = await api('/api/documentos-fiscais/preparar', { method: 'POST', body: JSON.stringify({ ordem_servico_id: osId, tipo }) });
+        fecharModal('modal-dynamic');
+        // Navega direto para a tela de conferência fiscal
+        abrirConferenciaFiscal(result.id);
+    } catch (e) { alert(e.message); }
+}
+
+// --- TELA DE CONFERÊNCIA FISCAL ---
+async function abrirConferenciaFiscal(docId) {
+    try {
+        const doc = await api(`/api/documentos-fiscais/${docId}`);
+        const df = doc.dados_fiscais || {};
+        const emit = df.emitente || {};
+        const dest = df.destinatario || {};
+        const serv = df.servico || {};
+        const fmtMoeda = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+        // Navega para a view de conferência
+        document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+        document.querySelector('[data-view="notas-fiscais-prep"]')?.classList.add('active');
+
+        document.getElementById('content').innerHTML = `
+            <h1 class="page-title">Conferência Fiscal — ${esc(doc.tipo)}</h1>
+            <p class="page-subtitle">OS #${doc.ordem_servico?.numero || doc.ordem_servico?.id || '—'} • ${esc(doc.empresa_nome)} • <span class="badge badge-${STATUS_FISCAL[doc.status]||'grey'}">${STATUS_FISCAL_LABEL[doc.status]||doc.status}</span></p>
+
+            <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.2);border-radius:10px;padding:14px 18px;margin-bottom:24px;display:flex;align-items:center;gap:10px;">
+                <i data-lucide="info" style="width:20px;height:20px;color:#60a5fa;flex-shrink:0;"></i>
+                <span style="font-size:13px;color:#60a5fa;">Confira os dados abaixo antes da emissão. A emissão não é automática — após conferir, marque como "Pronta para Emissão".</span>
+            </div>
+
+            <form onsubmit="salvarConferencia(event, ${docId})">
+                <div class="form-card">
+                    <h3 style="font-size:16px;font-weight:700;margin-bottom:16px;">📋 Emitente</h3>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Razão Social / Nome</label><input type="text" id="_fiscal_emit_nome" value="${esc(emit.nome||'')}" placeholder="Nome do emitente"></div>
+                        <div class="form-group"><label>CNPJ</label><input type="text" id="_fiscal_emit_cnpj" value="${esc(emit.cnpj||doc.empresa_cnpj||'')}" placeholder="CNPJ do emitente"></div>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Inscrição Municipal</label><input type="text" id="_fiscal_emit_im" value="${esc(emit.inscricao_municipal||'')}" placeholder="IM"></div>
+                        <div class="form-group"><label>Inscrição Estadual</label><input type="text" id="_fiscal_emit_ie" value="${esc(emit.inscricao_estadual||'')}" placeholder="IE"></div>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Endereço</label><input type="text" id="_fiscal_emit_endereco" value="${esc(emit.endereco||'')}" placeholder="Endereço do emitente"></div>
+                        <div class="form-group"><label>Município / UF</label><input type="text" id="_fiscal_emit_municipio" value="${esc(emit.municipio||'')}" placeholder="Cidade / UF"></div>
+                    </div>
+                </div>
+
+                <div class="form-card">
+                    <h3 style="font-size:16px;font-weight:700;margin-bottom:16px;">👤 Cliente / Destinatário</h3>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Nome / Razão Social</label><input type="text" id="_fiscal_dest_nome" value="${esc(dest.nome||'')}" placeholder="Nome do cliente"></div>
+                        <div class="form-group"><label>CPF / CNPJ</label><input type="text" id="_fiscal_dest_cpf_cnpj" value="${esc(dest.cpf_cnpj||'')}" placeholder="CPF ou CNPJ"></div>
+                    </div>
+                    <div class="form-group"><label>Endereço</label><input type="text" id="_fiscal_dest_endereco" value="${esc(dest.endereco||'')}" placeholder="Endereço do cliente"></div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Município</label><input type="text" id="_fiscal_dest_municipio" value="${esc(dest.municipio||'')}" placeholder="Cidade"></div>
+                        <div class="form-group"><label>UF</label><input type="text" id="_fiscal_dest_uf" value="${esc(dest.uf||'')}" maxlength="2" placeholder="SP"></div>
+                    </div>
+                </div>
+
+                <div class="form-card">
+                    <h3 style="font-size:16px;font-weight:700;margin-bottom:16px;">📦 Serviço / Produto</h3>
+                    <div class="form-group"><label>Descrição</label><textarea id="_fiscal_serv_descricao" rows="3" placeholder="Descrição do serviço/produto">${esc(serv.descricao||'')}</textarea></div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Quantidade</label><input type="number" id="_fiscal_serv_qtd" step="0.01" value="${serv.quantidade||1}"></div>
+                        <div class="form-group"><label>Valor Unitário (R$)</label><input type="number" id="_fiscal_serv_vu" step="0.01" value="${serv.valor_unitario||0}"></div>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Desconto (R$)</label><input type="number" id="_fiscal_serv_desc" step="0.01" value="${serv.desconto||0}"></div>
+                        <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="_fiscal_serv_vt" step="0.01" value="${serv.valor_total||doc.valor||0}"></div>
+                    </div>
+                    <div class="form-group"><label>Informações Fiscais / Observações</label><textarea id="_fiscal_obs" rows="2" placeholder="Informações complementares...">${esc(df.observacoes||'')}</textarea></div>
+                </div>
+
+                <div style="display:flex;gap:10px;justify-content:flex-end;margin-bottom:24px;">
+                    <button type="button" class="btn-cancel" onclick="navigate('ordens-servico')">Voltar</button>
+                    <button type="submit" class="btn-submit">Salvar Conferência</button>
+                    ${['aguardando_conferencia','rascunho','rejeitada'].includes(doc.status) ? `<button type="button" class="btn-submit" style="background:var(--accent-purple);" onclick="marcarProntaEmissao(${docId})">Marcar como Pronta para Emissão</button>` : ''}
+                </div>
+            </form>
+
+            <div class="table-card">
+                <div class="table-header"><div><h3>Histórico de Tentativas</h3><p>Todas as ações registradas neste documento</p></div></div>
+                <div style="padding:16px 24px;" id="_fiscal_historico"></div>
+            </div>`;
+
+        // Carrega histórico
+        try {
+            const hist = await api(`/api/documentos-fiscais/${docId}/historico`);
+            const histDiv = document.getElementById('_fiscal_historico');
+            if (hist.length === 0) {
+                histDiv.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px;">Nenhum histórico registrado.</p>';
+            } else {
+                histDiv.innerHTML = hist.map(h => `
+                    <div style="padding:10px 0;border-bottom:1px solid var(--border-light);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-weight:600;color:var(--text-primary);">${esc(h.acao)}</span>
+                            <span style="font-size:12px;color:var(--text-muted);">${new Date(h.data).toLocaleString('pt-BR')}</span>
+                        </div>
+                        ${h.detalhe ? `<div style="font-size:13px;color:var(--text-secondary);margin-top:4px;">${esc(h.detalhe)}</div>` : ''}
+                    </div>`).join('');
+            }
+        } catch (e) {}
+
+        lucide.createIcons();
+    } catch (e) { alert(e.message); navigate('notas-fiscais-prep'); }
+}
+
+async function salvarConferencia(e, docId) {
+    e.preventDefault();
+    const dadosFiscais = {
+        emitente: {
+            nome: document.getElementById('_fiscal_emit_nome').value,
+            cnpj: document.getElementById('_fiscal_emit_cnpj').value,
+            inscricao_municipal: document.getElementById('_fiscal_emit_im').value,
+            inscricao_estadual: document.getElementById('_fiscal_emit_ie').value,
+            endereco: document.getElementById('_fiscal_emit_endereco').value,
+            municipio: document.getElementById('_fiscal_emit_municipio').value
+        },
+        destinatario: {
+            nome: document.getElementById('_fiscal_dest_nome').value,
+            cpf_cnpj: document.getElementById('_fiscal_dest_cpf_cnpj').value,
+            endereco: document.getElementById('_fiscal_dest_endereco').value,
+            municipio: document.getElementById('_fiscal_dest_municipio').value,
+            uf: document.getElementById('_fiscal_dest_uf').value
+        },
+        servico: {
+            descricao: document.getElementById('_fiscal_serv_descricao').value,
+            quantidade: parseFloat(document.getElementById('_fiscal_serv_qtd').value) || 0,
+            valor_unitario: parseFloat(document.getElementById('_fiscal_serv_vu').value) || 0,
+            desconto: parseFloat(document.getElementById('_fiscal_serv_desc').value) || 0,
+            valor_total: parseFloat(document.getElementById('_fiscal_serv_vt').value) || 0
+        },
+        observacoes: document.getElementById('_fiscal_obs').value
+    };
+    const valor = dadosFiscais.servico.valor_total;
+    try {
+        await api(`/api/documentos-fiscais/${docId}`, { method: 'PUT', body: JSON.stringify({ dados_fiscais: dadosFiscais, valor }) });
+        alert('Conferência salva com sucesso!');
+        abrirConferenciaFiscal(docId);
+    } catch (err) { alert(err.message); }
+}
+
+async function marcarProntaEmissao(docId) {
+    try {
+        await api(`/api/documentos-fiscais/${docId}/pronta-emissao`, { method: 'PUT' });
+        alert('Documento marcado como pronto para emissão!');
+        abrirConferenciaFiscal(docId);
+    } catch (e) { alert(e.message); }
+}
+
+// --- VIEW: NOTAS FISCAIS (PREPARAÇÃO) ---
+views['notas-fiscais-prep'] = async function() {
+    await carregarEmpresasCache();
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Notas Fiscais — Preparação</h1>
+        <p class="page-subtitle">Documentos fiscais preparados a partir de Ordens de Serviço</p>
+        <div class="table-card">
+            <div class="table-header" style="flex-wrap:wrap;gap:10px;">
+                <div><h3>Documentos Fiscais</h3></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <select id="nf-prep-filtro-status" onchange="carregarDocsFiscais()" style="padding:6px 10px;border-radius:8px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-light);font-size:13px;">
+                        <option value="">Todos os status</option>
+                        ${Object.entries(STATUS_FISCAL_LABEL).map(([k,v]) => `<option value="${k}">${v}</option>`).join('')}
+                    </select>
+                    <select id="nf-prep-filtro-tipo" onchange="carregarDocsFiscais()" style="padding:6px 10px;border-radius:8px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-light);font-size:13px;">
+                        <option value="">Todos os tipos</option>
+                        <option value="NF-e">NF-e</option>
+                        <option value="NFS-e">NFS-e</option>
+                    </select>
+                </div>
+            </div>
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Tipo</th><th>Empresa</th><th>OS</th><th>Valor</th><th>Status</th><th>Criado em</th><th>Ações</th></tr></thead>
+                <tbody id="nf-prep-tbody"></tbody>
+            </table></div>
+        </div>`;
+    carregarDocsFiscais();
+};
+
+async function carregarDocsFiscais() {
+    const tb = document.getElementById('nf-prep-tbody');
+    if (!tb) return;
+    const status = document.getElementById('nf-prep-filtro-status')?.value || '';
+    const tipo = document.getElementById('nf-prep-filtro-tipo')?.value || '';
+    let url = '/api/documentos-fiscais';
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (tipo) params.append('tipo', tipo);
+    if (params.toString()) url += '?' + params.toString();
+    try {
+        const docs = await api(url);
+        if (docs.length === 0) { tb.innerHTML = emptyRow(7, 'Nenhum documento fiscal encontrado.'); return; }
+        const fmtMoeda = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        tb.innerHTML = docs.map(d => `
+            <tr>
+                <td><span class="badge badge-${d.tipo==='NF-e'?'blue':'purple'}">${esc(d.tipo)}</span></td>
+                <td style="font-weight:500;">${esc(d.empresa_nome) || '—'}</td>
+                <td class="text-secondary">${d.os_numero ? '#' + esc(d.os_numero) : '—'}</td>
+                <td style="font-weight:600;">${fmtMoeda(d.valor)}</td>
+                <td><span class="badge badge-${STATUS_FISCAL[d.status]||'grey'}">${STATUS_FISCAL_LABEL[d.status]||d.status}</span></td>
+                <td class="text-secondary">${new Date(d.datacriacao).toLocaleDateString('pt-BR')}</td>
+                <td style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button class="btn-sm btn-sm-blue" onclick="abrirConferenciaFiscal(${d.id})">Conferir</button>
+                    ${['pronta_para_emissao','aguardando_conferencia','rascunho','rejeitada'].includes(d.status) ? `<button class="btn-sm btn-sm-red" onclick="cancelarDocFiscal(${d.id})">Cancelar</button>` : ''}
+                    ${['rascunho','aguardando_conferencia','rejeitada'].includes(d.status) ? `<button class="btn-sm btn-sm-red" onclick="excluirDocFiscal(${d.id})">Excluir</button>` : ''}
+                </td>
+            </tr>`).join('');
+    } catch (e) { tb.innerHTML = emptyRow(7, 'Erro ao carregar documentos fiscais.'); }
+}
+
+async function cancelarDocFiscal(id) {
+    if (!confirm('Cancelar este documento fiscal?')) return;
+    try { await api(`/api/documentos-fiscais/${id}/cancelar`, { method: 'PUT' }); carregarDocsFiscais(); } catch (e) { alert(e.message); }
+}
+
+async function excluirDocFiscal(id) {
+    if (!confirm('Excluir este documento fiscal?')) return;
+    try { await api(`/api/documentos-fiscais/${id}`, { method: 'DELETE' }); carregarDocsFiscais(); } catch (e) { alert(e.message); }
 }
 
 // INIT
