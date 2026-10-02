@@ -1514,6 +1514,139 @@ app.get('/api/pendencias/cliente', verificarTokenCliente, async (req, res) => {
 });
 
 // ==========================================
+// 6b. CENTRAL DE PENDÊNCIAS E NOTIFICAÇÕES (CONTADOR)
+// ==========================================
+app.get('/api/central-pendencias', verificarTokenContador, async (req, res) => {
+    try {
+        const cid = req.contadorId;
+        const [docsSolicitados, docsAguardando, guiasPublicar, guiasVencer, msgsNaoLidas, tarefasPendentes, pendencias, checklistPendente] = await Promise.all([
+            // Documentos solicitados ao cliente (tipo=pendente, criados pelo contador)
+            pool.query(`SELECT d.id, d.empresa_id, d.categoria, d.descricao, d.tipo_documento, d.competencia, d.status, d.datacriacao, e.razaosocial
+                        FROM documentos d LEFT JOIN empresas e ON d.empresa_id = e.id
+                        WHERE d.contador_id = $1 AND d.tipo = 'pendente' AND d.status = 'pendente'
+                        ORDER BY d.datacriacao DESC`, [cid]),
+            // Documentos recebidos aguardando análise (enviados pelo cliente)
+            pool.query(`SELECT d.id, d.empresa_id, d.categoria, d.descricao, d.tipo_documento, d.competencia, d.status, d.datacriacao, e.razaosocial
+                        FROM documentos d LEFT JOIN empresas e ON d.empresa_id = e.id
+                        WHERE d.contador_id = $1 AND d.enviado_por = 'cliente' AND d.status IN ('enviado', 'Em análise')
+                        ORDER BY d.datacriacao DESC`, [cid]),
+            // Guias aguardando publicação (rascunho)
+            pool.query(`SELECT g.id, g.empresa_id, g.tipoimposto, g.competencia, g.valor, g.vencimento, g.status, e.razaosocial
+                        FROM guias g JOIN empresas e ON g.cnpj = e.cnpj
+                        WHERE (e.contador_id = $1 OR e.contadorid = $1) AND g.status = 'rascunho'
+                        ORDER BY g.datacriacao DESC`, [cid]),
+            // Guias próximas do vencimento (7 dias)
+            pool.query(`SELECT g.id, g.empresa_id, g.tipoimposto, g.competencia, g.valor, g.vencimento, g.status, e.razaosocial
+                        FROM guias g JOIN empresas e ON g.cnpj = e.cnpj
+                        WHERE (e.contador_id = $1 OR e.contadorid = $1)
+                          AND g.vencimento >= CURRENT_DATE AND g.vencimento <= CURRENT_DATE + INTERVAL '7 days'
+                          AND g.status NOT IN ('paga', 'pago', 'cancelada')
+                        ORDER BY g.vencimento ASC`, [cid]),
+            // Mensagens não lidas (dos clientes)
+            pool.query(`SELECT cm.id, cm.empresa_id, cm.mensagem, cm.datacriacao, e.razaosocial
+                        FROM chat_mensagens cm LEFT JOIN empresas e ON cm.empresa_id = e.id
+                        WHERE cm.contador_id = $1 AND cm.remetente = 'cliente' AND cm.lido = false
+                        ORDER BY cm.datacriacao DESC`, [cid]),
+            // Tarefas pendentes (CRM)
+            pool.query(`SELECT t.id, t.empresa_id, t.descricao, t.prazo, t.prioridade, e.razaosocial
+                        FROM crm_tarefas t LEFT JOIN empresas e ON t.empresa_id = e.id
+                        WHERE t.contador_id = $1 AND t.status = 'pendente'
+                        ORDER BY t.prioridade DESC, t.datacriacao DESC`, [cid]),
+            // Pendências gerais
+            pool.query(`SELECT p.id, p.empresa_id, p.descricao, p.prioridade, p.prazo, e.razaosocial
+                        FROM pendencias p LEFT JOIN empresas e ON p.empresa_id = e.id
+                        WHERE p.contador_id = $1 AND p.status = 'pendente'
+                        ORDER BY CASE p.prioridade WHEN 'urgente' THEN 1 WHEN 'atencao' THEN 2 ELSE 3 END, p.datacriacao DESC`, [cid]),
+            // Checklist pendente (todas as empresas)
+            pool.query(`SELECT c.id, c.empresa_id, c.item, c.competencia, e.razaosocial
+                        FROM checklist_mensal c JOIN empresas e ON c.empresa_id = e.id
+                        WHERE (e.contador_id = $1 OR e.contadorid = $1) AND c.status = 'pendente'
+                        ORDER BY c.datacriacao DESC`, [cid])
+        ]);
+
+        res.json({
+            documentosSolicitados: docsSolicitados.rows,
+            documentosAguardando: docsAguardando.rows,
+            guiasAguardandoPublicacao: guiasPublicar.rows,
+            guiasProximasVencimento: guiasVencer.rows,
+            mensagensNaoLidas: msgsNaoLidas.rows,
+            tarefasPendentes: tarefasPendentes.rows,
+            pendencias: pendencias.rows,
+            checklistPendente: checklistPendente.rows,
+            totais: {
+                documentosSolicitados: docsSolicitados.rows.length,
+                documentosAguardando: docsAguardando.rows.length,
+                guiasAguardandoPublicacao: guiasPublicar.rows.length,
+                guiasProximasVencimento: guiasVencer.rows.length,
+                mensagensNaoLidas: msgsNaoLidas.rows.length,
+                tarefasPendentes: tarefasPendentes.rows.length,
+                pendencias: pendencias.rows.length,
+                checklistPendente: checklistPendente.rows.length
+            }
+        });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar central de pendências: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 6c. CENTRAL DE PENDÊNCIAS E NOTIFICAÇÕES (CLIENTE)
+// ==========================================
+app.get('/api/cliente/central-pendencias', verificarTokenCliente, async (req, res) => {
+    try {
+        const eid = req.empresaId;
+        const cnpj = req.empresaCnpj;
+        const [docsSolicitados, guiasDisponiveis, guiasVencer, msgsNaoLidas, pendencias, checklistPendente] = await Promise.all([
+            // Documentos solicitados/faltantes (contador pediu, cliente ainda não enviou)
+            pool.query(`SELECT id, categoria, descricao, tipo_documento, competencia, observacao, status, datacriacao
+                        FROM documentos WHERE empresa_id = $1 AND tipo = 'pendente' AND status = 'pendente'
+                        ORDER BY datacriacao DESC`, [eid]),
+            // Guias disponíveis (publicadas/visualizadas)
+            pool.query(`SELECT id, tipoimposto, competencia, valor, vencimento, status, descricao, observacao
+                        FROM guias WHERE cnpj = $1 AND status IN ('publicada', 'visualizada')
+                        ORDER BY vencimento DESC`, [cnpj]),
+            // Guias próximas do vencimento (7 dias)
+            pool.query(`SELECT id, tipoimposto, competencia, valor, vencimento, status
+                        FROM guias WHERE cnpj = $1 AND vencimento >= CURRENT_DATE
+                          AND vencimento <= CURRENT_DATE + INTERVAL '7 days'
+                          AND status NOT IN ('paga', 'pago', 'cancelada')
+                        ORDER BY vencimento ASC`, [cnpj]),
+            // Mensagens não lidas (do contador)
+            pool.query(`SELECT id, mensagem, remetente, datacriacao
+                        FROM chat_mensagens WHERE empresa_id = $1 AND remetente = 'contador' AND lido = false
+                        ORDER BY datacriacao DESC`, [eid]),
+            // Solicitações do contador (pendências)
+            pool.query(`SELECT id, descricao, prioridade, prazo
+                        FROM pendencias WHERE empresa_id = $1 AND status = 'pendente'
+                        ORDER BY CASE prioridade WHEN 'urgente' THEN 1 WHEN 'atencao' THEN 2 ELSE 3 END, datacriacao DESC`, [eid]),
+            // Checklist pendente
+            pool.query(`SELECT id, item, competencia, status
+                        FROM checklist_mensal WHERE empresa_id = $1 AND status = 'pendente'
+                        ORDER BY datacriacao DESC`, [eid])
+        ]);
+
+        res.json({
+            documentosSolicitados: docsSolicitados.rows,
+            guiasDisponiveis: guiasDisponiveis.rows,
+            guiasProximasVencimento: guiasVencer.rows,
+            mensagensNaoLidas: msgsNaoLidas.rows,
+            solicitacoesContador: pendencias.rows,
+            tarefasPendentes: checklistPendente.rows,
+            totais: {
+                documentosSolicitados: docsSolicitados.rows.length,
+                guiasDisponiveis: guiasDisponiveis.rows.length,
+                guiasProximasVencimento: guiasVencer.rows.length,
+                mensagensNaoLidas: msgsNaoLidas.rows.length,
+                solicitacoesContador: pendencias.rows.length,
+                tarefasPendentes: checklistPendente.rows.length
+            }
+        });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar central de pendências: ' + erro.message });
+    }
+});
+
+// ==========================================
 // 7. CHECKLIST MENSAL
 // ==========================================
 app.get('/api/checklist/:empresaId', verificarTokenContador, async (req, res) => {

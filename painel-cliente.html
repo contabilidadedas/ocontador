@@ -150,6 +150,7 @@
             <div class="nav-section">
                 <div class="nav-section-title">Principal</div>
                 <a class="nav-item active" data-view="inicio" onclick="navigate('inicio')"><i data-lucide="home"></i> Início</a>
+                <a class="nav-item" data-view="central-pendencias" onclick="navigate('central-pendencias')"><i data-lucide="bell-ring"></i> Central de Pendências</a>
             </div>
             <div class="nav-section">
                 <div class="nav-section-title">Documentos</div>
@@ -270,6 +271,7 @@ clientViews.inicio = async function() {
     document.getElementById('content').innerHTML = `
         <h1 class="page-title">Meu Escritório Contábil</h1>
         <p class="page-subtitle">Veja abaixo o que precisamos de você este mês</p>
+        <div id="inicio-central-resumo"></div>
         <div class="card">
             <h3>📋 Pendências</h3>
             <div id="inicio-pendencias"></div>
@@ -283,7 +285,50 @@ clientViews.inicio = async function() {
             <div id="inicio-avisos"></div>
         </div>`;
     try {
-        const data = await api('/api/cliente/dashboard');
+        const [data, centralData] = await Promise.all([
+            api('/api/cliente/dashboard'),
+            api('/api/cliente/central-pendencias').catch(() => null)
+        ]);
+
+        // Resumo da Central de Pendências
+        const resumoDiv = document.getElementById('inicio-central-resumo');
+        if (resumoDiv && centralData) {
+            const t = centralData.totais;
+            const total = t.documentosSolicitados + t.guiasDisponiveis + t.guiasProximasVencimento + t.mensagensNaoLidas + t.solicitacoesContador + t.tarefasPendentes;
+            const alertas = [];
+            if (t.guiasProximasVencimento > 0) alertas.push({ icon: 'calendar-clock', label: 'Guias vencendo', count: t.guiasProximasVencimento, color: '#f87171' });
+            if (t.documentosSolicitados > 0) alertas.push({ icon: 'file-clock', label: 'Documentos faltantes', count: t.documentosSolicitados, color: '#fbbf24' });
+            if (t.guiasDisponiveis > 0) alertas.push({ icon: 'file-text', label: 'Guias disponíveis', count: t.guiasDisponiveis, color: '#c4b5fd' });
+            if (t.mensagensNaoLidas > 0) alertas.push({ icon: 'mail', label: 'Mensagens não lidas', count: t.mensagensNaoLidas, color: '#60a5fa' });
+            if (t.solicitacoesContador > 0) alertas.push({ icon: 'alert-triangle', label: 'Solicitações do contador', count: t.solicitacoesContador, color: '#fbbf24' });
+            if (t.tarefasPendentes > 0) alertas.push({ icon: 'clipboard-list', label: 'Tarefas pendentes', count: t.tarefasPendentes, color: '#c4b5fd' });
+
+            if (total > 0) {
+                resumoDiv.innerHTML = `
+                    <div class="card" style="border-left:4px solid var(--accent-purple);">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                            <h3 style="margin:0;">🔔 Central de Pendências</h3>
+                            <button class="btn-sm btn-sm-purple" onclick="navigate('central-pendencias')">Ver Central Completa</button>
+                        </div>
+                        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                            ${alertas.map(a => `<div onclick="navigate('central-pendencias')" style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg-body);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='${a.color}'" onmouseout="this.style.borderColor='var(--border)'">
+                                <i data-lucide="${a.icon}" style="width:18px;height:18px;color:${a.color};"></i>
+                                <span style="font-size:13px;font-weight:500;">${a.label}</span>
+                                <span style="font-size:14px;font-weight:700;color:${a.color};">${a.count}</span>
+                            </div>`).join('')}
+                        </div>
+                    </div>`;
+            } else {
+                resumoDiv.innerHTML = `
+                    <div class="card" style="border-left:4px solid #4ade80;">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <i data-lucide="check-circle" style="width:24px;height:24px;color:#4ade80;"></i>
+                            <div><span style="font-weight:600;">Tudo em dia! 🎉</span> <span style="color:var(--text-secondary);font-size:13px;">Nenhuma pendência no momento.</span></div>
+                            <button class="btn-sm btn-sm-purple" style="margin-left:auto;" onclick="navigate('central-pendencias')">Ver Central</button>
+                        </div>
+                    </div>`;
+            }
+        }
         // Pendências
         const pendDiv = document.getElementById('inicio-pendencias');
         if (data.pendencias.length === 0) {
@@ -324,6 +369,166 @@ clientViews.inicio = async function() {
     } catch (e) {
         document.getElementById('inicio-pendencias').innerHTML = '<div style="color:var(--text-muted);">Erro ao carregar.</div>';
     }
+};
+
+// --- CENTRAL DE PENDÊNCIAS E NOTIFICAÇÕES ---
+clientViews['central-pendencias'] = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Central de Pendências</h1>
+        <p class="page-subtitle">Tudo que precisa da sua atenção em um só lugar</p>
+        <div id="central-cli-loading" style="text-align:center;padding:60px;color:var(--text-muted);">Carregando...</div>
+        <div id="central-cli-content" style="display:none;"></div>`;
+    try {
+        const data = await api('/api/cliente/central-pendencias');
+        const t = data.totais;
+        const totalGeral = t.documentosSolicitados + t.guiasDisponiveis + t.guiasProximasVencimento + t.mensagensNaoLidas + t.solicitacoesContador + t.tarefasPendentes;
+
+        const fmtData = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+        const fmtValor = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const diasVencer = d => {
+            if (!d) return '';
+            const diff = Math.ceil((new Date(d) - new Date()) / 86400000);
+            if (diff < 0) return `<span style="color:#f87171;font-weight:600;">Vencida</span>`;
+            if (diff === 0) return `<span style="color:#fbbf24;font-weight:600;">Hoje</span>`;
+            return `<span style="color:${diff <= 3 ? '#f87171' : '#fbbf24'};">${diff} dia${diff > 1 ? 's' : ''}</span>`;
+        };
+        const prioridadeCor = p => p === 'urgente' ? '#f87171' : p === 'atencao' ? '#fbbf24' : '#4ade80';
+        const prioridadeDot = p => p === 'urgente' ? 'pendente' : p === 'atencao' ? 'aguardando' : 'recebido';
+        const prioridadeLabel = p => p === 'urgente' ? '🔴' : p === 'atencao' ? '🟡' : '🟢';
+
+        let html = '';
+
+        // Cards de resumo
+        const cards = [
+            { label: 'Docs. Faltantes', value: t.documentosSolicitados, icon: 'file-clock', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
+            { label: 'Guias Disponíveis', value: t.guiasDisponiveis, icon: 'file-text', color: 'rgba(139,92,246,0.15)', iconColor: '#c4b5fd' },
+            { label: 'Guias Vencendo', value: t.guiasProximasVencimento, icon: 'calendar-clock', color: 'rgba(220,38,38,0.15)', iconColor: '#f87171' },
+            { label: 'Mensagens Não Lidas', value: t.mensagensNaoLidas, icon: 'mail', color: 'rgba(59,130,246,0.15)', iconColor: '#60a5fa' },
+            { label: 'Solicitações do Contador', value: t.solicitacoesContador, icon: 'alert-triangle', color: 'rgba(217,119,6,0.15)', iconColor: '#fbbf24' },
+            { label: 'Tarefas Pendentes', value: t.tarefasPendentes, icon: 'clipboard-list', color: 'rgba(139,92,246,0.15)', iconColor: '#c4b5fd' }
+        ];
+        html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:24px;">`;
+        html += cards.map(c => `
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <span style="font-size:12px;color:var(--text-secondary);font-weight:600;">${c.label}</span>
+                    <div style="width:32px;height:32px;border-radius:8px;background:${c.color};display:flex;align-items:center;justify-content:center;"><i data-lucide="${c.icon}" style="width:16px;height:16px;color:${c.iconColor};"></i></div>
+                </div>
+                <div style="font-size:28px;font-weight:800;color:${c.value > 0 ? c.iconColor : 'var(--text-muted)'};">${c.value}</div>
+            </div>`).join('');
+        html += `</div>`;
+
+        if (totalGeral === 0) {
+            html += `<div class="card"><div style="text-align:center;padding:60px;color:var(--text-muted);"><i data-lucide="check-circle" style="width:48px;height:48px;color:#4ade80;margin-bottom:16px;"></i><h3 style="font-size:18px;color:#4ade80;">Tudo em dia! 🎉</h3><p style="margin-top:8px;">Nenhuma pendência no momento.</p></div></div>`;
+        } else {
+            // Documentos solicitados/faltantes
+            if (data.documentosSolicitados.length > 0) {
+                html += `<div class="card">
+                    <h3>📄 Documentos Faltantes</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">O contador solicitou estes documentos</p>
+                    ${data.documentosSolicitados.map(d => `
+                    <div class="checklist-item">
+                        <div class="check-dot pendente"></div>
+                        <div style="flex:1;">
+                            <span class="check-item-name">${d.tipo_documento || d.categoria || d.descricao || 'Documento'}</span>
+                            ${d.competencia ? `<span style="font-size:12px;color:var(--text-muted);margin-left:8px;">${d.competencia}</span>` : ''}
+                            ${d.observacao ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">${d.observacao}</div>` : ''}
+                        </div>
+                        <button class="btn-sm btn-sm-purple" onclick="navigate('documentos')">Enviar</button>
+                    </div>`).join('')}
+                </div>`;
+            }
+
+            // Guias disponíveis
+            if (data.guiasDisponiveis.length > 0) {
+                html += `<div class="card">
+                    <h3>🧾 Guias Disponíveis</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Guias publicadas pelo contador</p>
+                    ${data.guiasDisponiveis.map(g => `
+                    <div class="checklist-item" style="flex-wrap:wrap;">
+                        <div class="check-dot disponivel"></div>
+                        <span class="check-item-name" style="font-weight:600;">${g.tipoimposto || '—'}</span>
+                        ${g.competencia ? `<span style="font-size:12px;color:var(--text-muted);">— ${g.competencia}</span>` : ''}
+                        <span style="color:var(--text-secondary);font-size:13px;">Venc: ${fmtData(g.vencimento)}</span>
+                        <span style="font-weight:600;color:#c4b5fd;">${fmtValor(g.valor)}</span>
+                        <button class="btn-sm btn-sm-purple" onclick="navigate('guias')">Ver Guias</button>
+                    </div>`).join('')}
+                </div>`;
+            }
+
+            // Guias próximas do vencimento
+            if (data.guiasProximasVencimento.length > 0) {
+                html += `<div class="card" style="border-left:4px solid #f87171;">
+                    <h3>⏰ Guias Próximas do Vencimento</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Vencem nos próximos 7 dias</p>
+                    ${data.guiasProximasVencimento.map(g => `
+                    <div class="checklist-item" style="flex-wrap:wrap;">
+                        <div class="check-dot aguardando"></div>
+                        <span class="check-item-name" style="font-weight:600;">${g.tipoimposto || '—'}</span>
+                        ${g.competencia ? `<span style="font-size:12px;color:var(--text-muted);">— ${g.competencia}</span>` : ''}
+                        <span style="color:var(--text-secondary);font-size:13px;">Venc: ${fmtData(g.vencimento)}</span>
+                        <span style="font-weight:600;">${fmtValor(g.valor)}</span>
+                        ${diasVencer(g.vencimento)}
+                        <button class="btn-sm btn-sm-purple" onclick="navigate('guias')">Pagar</button>
+                    </div>`).join('')}
+                </div>`;
+            }
+
+            // Solicitações do contador (pendências)
+            if (data.solicitacoesContador.length > 0) {
+                html += `<div class="card">
+                    <h3>📋 Solicitações do Contador</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Pendências que o contador cadastrou para você</p>
+                    ${data.solicitacoesContador.map(p => `
+                    <div class="checklist-item" style="flex-wrap:wrap;">
+                        <div class="check-dot ${prioridadeDot(p.prioridade)}"></div>
+                        <span class="check-item-name">${prioridadeLabel(p.prioridade)} ${p.descricao}</span>
+                        ${p.prazo ? `<span style="color:var(--text-secondary);font-size:13px;">Prazo: ${fmtData(p.prazo)}</span>` : ''}
+                        <span class="check-item-status" style="color:${prioridadeCor(p.prioridade)};">${(p.prioridade || 'media').toUpperCase()}</span>
+                    </div>`).join('')}
+                </div>`;
+            }
+
+            // Mensagens não lidas
+            if (data.mensagensNaoLidas.length > 0) {
+                html += `<div class="card">
+                    <h3>💬 Mensagens Não Lidas</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Novas mensagens do seu contador</p>
+                    ${data.mensagensNaoLidas.map(m => `
+                    <div class="checklist-item" style="flex-wrap:wrap;">
+                        <div class="check-dot recebido"></div>
+                        <div style="flex:1;">
+                            <span class="check-item-name">${m.mensagem.substring(0, 120)}${m.mensagem.length > 120 ? '...' : ''}</span>
+                            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${new Date(m.datacriacao).toLocaleString('pt-BR')}</div>
+                        </div>
+                        <button class="btn-sm btn-sm-purple" onclick="navigate('chat')">Ver Chat</button>
+                    </div>`).join('')}
+                </div>`;
+            }
+
+            // Tarefas pendentes (checklist)
+            if (data.tarefasPendentes.length > 0) {
+                html += `<div class="card">
+                    <h3>✅ Tarefas Pendentes</h3>
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Itens do checklist mensal</p>
+                    ${data.tarefasPendentes.map(c => `
+                    <div class="checklist-item">
+                        <div class="check-dot pendente"></div>
+                        <span class="check-item-name">${c.item}</span>
+                        ${c.competencia ? `<span style="font-size:12px;color:var(--text-muted);">${c.competencia}</span>` : ''}
+                        <span class="check-item-status" style="color:#f87171;">PENDENTE</span>
+                    </div>`).join('')}
+                </div>`;
+            }
+        }
+
+        document.getElementById('central-cli-loading').style.display = 'none';
+        document.getElementById('central-cli-content').style.display = 'block';
+        document.getElementById('central-cli-content').innerHTML = html;
+    } catch (e) {
+        document.getElementById('central-cli-loading').innerHTML = '<div style="color:#f87171;">Erro ao carregar.</div>';
+    }
+    lucide.createIcons();
 };
 
 // --- PENDÊNCIAS ---

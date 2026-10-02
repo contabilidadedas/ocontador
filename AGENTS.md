@@ -29,6 +29,14 @@ Uses PostgreSQL for persistence and JWT for auth. File uploads (PDFs) stored in 
 - **Guide versioning**: Already existed (`guias.versao`); edits increment version, published guides cannot be edited.
 - **File storage**: Files stored as BYTEA in PostgreSQL (private — no public URL, access follows app permissions). All download routes require JWT + ownership verification.
 
+## Central de Pendências e Notificações (Stage 6)
+- **Backend**: Two aggregation endpoints that pull from multiple tables (documentos, guias, chat_mensagens, pendencias, crm_tarefas, checklist_mensal) into a single response with per-category arrays + totals.
+  - `GET /api/central-pendencias` (contador) — shows what needs the contador's attention across ALL their companies: documentos solicitados, documentos aguardando análise, guias aguardando publicação, guias próximas do vencimento (7 dias), mensagens não lidas (dos clientes), tarefas pendentes (CRM), pendências gerais, checklist pendente.
+  - `GET /api/cliente/central-pendencias` (cliente) — shows what needs the cliente's attention for THEIR company only: documentos faltantes, guias disponíveis, guias próximas do vencimento, mensagens não lidas (do contador), solicitações do contador, tarefas pendentes (checklist).
+- **Frontend (contador)**: New sidebar item "Central de Pendências" (`views['central-pendencias']`) with 8 summary cards + per-category tables. Dashboard gets a widget summarizing the central with quick-jump buttons.
+- **Frontend (cliente)**: New sidebar item "Central de Pendências" (`clientViews['central-pendencias']`) with 6 summary cards + per-category cards. "Início" view gets a resumo widget with alert badges.
+- **Security**: Both endpoints use existing JWT middleware (`verificarTokenContador` / `verificarTokenCliente`). Contador queries filter by `contador_id`; cliente queries filter by `empresa_id` / `cnpj` from the token. RLS policies on all queried tables provide defense-in-depth. No cross-empresa data exposure.
+
 ## Verify
 - `curl localhost:3000` returns the index.html landing page.
 - `curl localhost:3000/api/contador/login -X POST -H 'Content-Type: application/json' -d '{"email":"x","senha":"y"}'` returns a JSON error (confirms API + DB are live).
