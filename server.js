@@ -369,6 +369,67 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`INSERT INTO config_sistema (chave, valor) VALUES ('valor_mensal_contador', '99') ON CONFLICT (chave) DO NOTHING;`);
 
         // ==========================================
+        // ETAPA 9 — ORDENS DE SERVIÇO E DOCUMENTOS FISCAIS
+        // ==========================================
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ordens_servico (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER NOT NULL,
+                contador_id INTEGER NOT NULL,
+                numero VARCHAR(50),
+                cliente_nome VARCHAR(255),
+                cliente_cpf_cnpj VARCHAR(20),
+                cliente_endereco VARCHAR(500),
+                cliente_municipio VARCHAR(255),
+                cliente_uf VARCHAR(2),
+                servico_descricao TEXT,
+                quantidade NUMERIC(12,2) DEFAULT 1,
+                valor_unitario NUMERIC(12,2) DEFAULT 0,
+                valor_total NUMERIC(12,2) DEFAULT 0,
+                desconto NUMERIC(12,2) DEFAULT 0,
+                observacoes TEXT,
+                status VARCHAR(50) DEFAULT 'rascunho',
+                datacriacao TIMESTAMP DEFAULT NOW(),
+                data_atualizacao TIMESTAMP DEFAULT NOW()
+            );
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS documentos_fiscais (
+                id SERIAL PRIMARY KEY,
+                empresa_id INTEGER NOT NULL,
+                contador_id INTEGER NOT NULL,
+                ordem_servico_id INTEGER,
+                tipo VARCHAR(10) NOT NULL,
+                numero VARCHAR(50),
+                serie VARCHAR(10),
+                chave_acesso VARCHAR(44),
+                protocolo VARCHAR(50),
+                status VARCHAR(50) DEFAULT 'rascunho',
+                valor NUMERIC(12,2) DEFAULT 0,
+                xml TEXT,
+                pdf_danfe BYTEA,
+                pdf_nome VARCHAR(255),
+                data_emissao TIMESTAMP,
+                data_autorizacao TIMESTAMP,
+                dados_fiscais JSONB,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS documento_fiscal_historico (
+                id SERIAL PRIMARY KEY,
+                documento_fiscal_id INTEGER NOT NULL,
+                acao VARCHAR(255) NOT NULL,
+                detalhe TEXT,
+                usuario_id INTEGER,
+                usuario_tipo VARCHAR(20),
+                data TIMESTAMP DEFAULT NOW()
+            );
+        `);
+
+        // ==========================================
         // SEGURANÇA E AUDITORIA — colunas extras
         // ==========================================
         // Colunas adicionais no audit_log para rastreabilidade completa
@@ -406,7 +467,8 @@ async function criarTabelasAutomaticamente() {
             'calendario_obrigacoes', 'procuracoes', 'notas_fiscais', 'folha_pagamento',
             'checklist_mensal', 'avisos', 'chat_mensagens', 'crm_contatos', 'crm_atividades',
             'crm_tarefas', 'documento_historico', 'guia_historico', 'audit_log',
-            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais'];
+            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais',
+            'documentos_fiscais', 'documento_fiscal_historico'];
 
         for (const tabela of rlsTables) {
             await pool.query(`ALTER TABLE ${tabela} ENABLE ROW LEVEL SECURITY;`);
@@ -417,7 +479,8 @@ async function criarTabelasAutomaticamente() {
         const contadorIdTables = ['documentos', 'pendencias', 'financeiro', 'calendario_obrigacoes',
             'procuracoes', 'notas_fiscais', 'folha_pagamento', 'avisos', 'chat_mensagens',
             'crm_contatos', 'crm_atividades', 'crm_tarefas',
-            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais'];
+            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais',
+            'documentos_fiscais'];
         for (const tabela of contadorIdTables) {
             await pool.query(`DROP POLICY IF EXISTS ${tabela}_rls_policy ON ${tabela};`);
             await pool.query(`
@@ -472,6 +535,14 @@ async function criarTabelasAutomaticamente() {
         await pool.query(`DROP POLICY IF EXISTS guia_historico_rls_policy ON guia_historico;`);
         await pool.query(`
             CREATE POLICY guia_historico_rls_policy ON guia_historico
+            USING (current_setting('app.contador_id', true) IS NULL
+                   OR (usuario_tipo = 'contador' AND usuario_id = current_setting('app.contador_id', true)::INTEGER))
+        `);
+
+        // documento_fiscal_historico: usa usuario_id + usuario_tipo
+        await pool.query(`DROP POLICY IF EXISTS documento_fiscal_historico_rls_policy ON documento_fiscal_historico;`);
+        await pool.query(`
+            CREATE POLICY documento_fiscal_historico_rls_policy ON documento_fiscal_historico
             USING (current_setting('app.contador_id', true) IS NULL
                    OR (usuario_tipo = 'contador' AND usuario_id = current_setting('app.contador_id', true)::INTEGER))
         `);
@@ -2500,6 +2571,364 @@ app.get('/api/cliente/guias/:id/historico', verificarTokenCliente, async (req, r
             `SELECT * FROM guia_historico WHERE guia_id = $1 AND acao IN ('Visualização', 'Download') ORDER BY data DESC`, [id]
         );
         res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 18. ORDENS DE SERVIÇO (ETAPA 9)
+// ==========================================
+
+// Helper: registra histórico de documento fiscal
+async function registrarHistoricoFiscal(docFiscalId, usuarioId, usuarioTipo, acao, detalhe) {
+    try {
+        await pool.query(
+            'INSERT INTO documento_fiscal_historico (documento_fiscal_id, acao, detalhe, usuario_id, usuario_tipo, data) VALUES ($1, $2, $3, $4, $5, NOW())',
+            [docFiscalId, acao, detalhe || null, usuarioId, usuarioTipo]
+        );
+    } catch (e) {
+        console.error('Erro ao registrar histórico fiscal:', e.message);
+    }
+}
+
+// Helper: verifica se uma OS pertence ao contador
+async function osPertenceContador(osId, contadorId) {
+    const r = await pool.query('SELECT * FROM ordens_servico WHERE id = $1 AND contador_id = $2', [osId, contadorId]);
+    return r.rows.length > 0 ? r.rows[0] : null;
+}
+
+// Helper: verifica se um documento fiscal pertence ao contador
+async function docFiscalPertenceContador(docId, contadorId) {
+    const r = await pool.query('SELECT * FROM documentos_fiscais WHERE id = $1 AND contador_id = $2', [docId, contadorId]);
+    return r.rows.length > 0 ? r.rows[0] : null;
+}
+
+// Listar Ordens de Serviço
+app.get('/api/ordens-servico', verificarTokenContador, async (req, res) => {
+    try {
+        const { status, empresa_id } = req.query;
+        let query = `SELECT os.*, e.razaosocial as empresa_nome, e.cnpj as empresa_cnpj
+                     FROM ordens_servico os
+                     JOIN empresas e ON os.empresa_id = e.id
+                     WHERE os.contador_id = $1`;
+        const params = [req.contadorId];
+        let idx = 2;
+        if (status) { query += ` AND os.status = $${idx++}`; params.push(status); }
+        if (empresa_id) { query += ` AND os.empresa_id = $${idx++}`; params.push(empresa_id); }
+        query += ' ORDER BY os.datacriacao DESC';
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar ordens de serviço: ' + erro.message });
+    }
+});
+
+// Obter uma OS específica
+app.get('/api/ordens-servico/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const os = await osPertenceContador(req.params.id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada ou acesso negado.' });
+        const empresa = await pool.query('SELECT razaosocial, cnpj, emailempresa FROM empresas WHERE id = $1', [os.empresa_id]);
+        res.json({ ...os, empresa_nome: empresa.rows[0]?.razaosocial, empresa_cnpj: empresa.rows[0]?.cnpj });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Criar Ordem de Serviço
+app.post('/api/ordens-servico', verificarTokenContador, async (req, res) => {
+    try {
+        const { empresa_id, cliente_nome, cliente_cpf_cnpj, cliente_endereco, cliente_municipio,
+                cliente_uf, servico_descricao, quantidade, valor_unitario, valor_total,
+                desconto, observacoes } = req.body;
+        if (!empresa_id) return res.status(400).json({ erro: 'Empresa é obrigatória.' });
+        if (!(await validarEmpresaContador(res, empresa_id, req.contadorId))) return;
+
+        const qtd = parseFloat(quantidade) || 1;
+        const vu = parseFloat(valor_unitario) || 0;
+        const desc = parseFloat(desconto) || 0;
+        const vt = parseFloat(valor_total) || (qtd * vu - desc);
+
+        const result = await pool.query(
+            `INSERT INTO ordens_servico (empresa_id, contador_id, cliente_nome, cliente_cpf_cnpj,
+                cliente_endereco, cliente_municipio, cliente_uf, servico_descricao,
+                quantidade, valor_unitario, valor_total, desconto, observacoes, status, datacriacao, data_atualizacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'rascunho', NOW(), NOW()) RETURNING id`,
+            [empresa_id, req.contadorId, cliente_nome || '', cliente_cpf_cnpj || '',
+             cliente_endereco || '', cliente_municipio || '', cliente_uf || '',
+             servico_descricao || '', qtd, vu, vt, desc, observacoes || '']
+        );
+        await registrarAuditoria(req.contadorId, 'contador', `Criou ordem de serviço ID: ${result.rows[0].id}`, req,
+            { entidade: 'ordem_servico', entidade_id: result.rows[0].id, empresa_id: parseInt(empresa_id) });
+        res.status(201).json({ mensagem: 'Ordem de serviço criada!', id: result.rows[0].id });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao criar ordem de serviço: ' + erro.message });
+    }
+});
+
+// Atualizar Ordem de Serviço
+app.put('/api/ordens-servico/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const os = await osPertenceContador(req.params.id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada ou acesso negado.' });
+        const { cliente_nome, cliente_cpf_cnpj, cliente_endereco, cliente_municipio,
+                cliente_uf, servico_descricao, quantidade, valor_unitario, valor_total,
+                desconto, observacoes, status } = req.body;
+        const updates = [];
+        const params = [];
+        let idx = 1;
+        if (cliente_nome !== undefined) { updates.push(`cliente_nome = $${idx++}`); params.push(cliente_nome); }
+        if (cliente_cpf_cnpj !== undefined) { updates.push(`cliente_cpf_cnpj = $${idx++}`); params.push(cliente_cpf_cnpj); }
+        if (cliente_endereco !== undefined) { updates.push(`cliente_endereco = $${idx++}`); params.push(cliente_endereco); }
+        if (cliente_municipio !== undefined) { updates.push(`cliente_municipio = $${idx++}`); params.push(cliente_municipio); }
+        if (cliente_uf !== undefined) { updates.push(`cliente_uf = $${idx++}`); params.push(cliente_uf); }
+        if (servico_descricao !== undefined) { updates.push(`servico_descricao = $${idx++}`); params.push(servico_descricao); }
+        if (quantidade !== undefined) { updates.push(`quantidade = $${idx++}`); params.push(quantidade); }
+        if (valor_unitario !== undefined) { updates.push(`valor_unitario = $${idx++}`); params.push(valor_unitario); }
+        if (valor_total !== undefined) { updates.push(`valor_total = $${idx++}`); params.push(valor_total); }
+        if (desconto !== undefined) { updates.push(`desconto = $${idx++}`); params.push(desconto); }
+        if (observacoes !== undefined) { updates.push(`observacoes = $${idx++}`); params.push(observacoes); }
+        if (status !== undefined) { updates.push(`status = $${idx++}`); params.push(status); }
+        if (updates.length > 0) {
+            updates.push(`data_atualizacao = NOW()`);
+            params.push(req.params.id);
+            await pool.query(`UPDATE ordens_servico SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+        }
+        res.json({ mensagem: 'Ordem de serviço atualizada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
+    }
+});
+
+// Alterar status da OS
+app.put('/api/ordens-servico/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        const os = await osPertenceContador(req.params.id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada ou acesso negado.' });
+        const { status } = req.body;
+        const statusValidos = ['rascunho', 'aberta', 'em_andamento', 'concluida', 'cancelada'];
+        if (!statusValidos.includes(status)) return res.status(400).json({ erro: 'Status inválido.' });
+        await pool.query('UPDATE ordens_servico SET status = $1, data_atualizacao = NOW() WHERE id = $2', [status, req.params.id]);
+        res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Excluir OS
+app.delete('/api/ordens-servico/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const os = await osPertenceContador(req.params.id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada ou acesso negado.' });
+        await pool.query('DELETE FROM ordens_servico WHERE id = $1', [req.params.id]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu ordem de serviço ID: ${req.params.id}`, req,
+            { entidade: 'ordem_servico', entidade_id: parseInt(req.params.id) });
+        res.json({ mensagem: 'Ordem de serviço excluída.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 19. DOCUMENTOS FISCAIS (NF-e / NFS-e) — ETAPA 9
+// ==========================================
+
+// Listar documentos fiscais
+app.get('/api/documentos-fiscais', verificarTokenContador, async (req, res) => {
+    try {
+        const { status, tipo, empresa_id } = req.query;
+        let query = `SELECT df.*, e.razaosocial as empresa_nome, e.cnpj as empresa_cnpj,
+                        os.numero as os_numero
+                     FROM documentos_fiscais df
+                     JOIN empresas e ON df.empresa_id = e.id
+                     LEFT JOIN ordens_servico os ON df.ordem_servico_id = os.id
+                     WHERE df.contador_id = $1`;
+        const params = [req.contadorId];
+        let idx = 2;
+        if (status) { query += ` AND df.status = $${idx++}`; params.push(status); }
+        if (tipo) { query += ` AND df.tipo = $${idx++}`; params.push(tipo); }
+        if (empresa_id) { query += ` AND df.empresa_id = $${idx++}`; params.push(empresa_id); }
+        query += ' ORDER BY df.datacriacao DESC';
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar documentos fiscais: ' + erro.message });
+    }
+});
+
+// Obter um documento fiscal específico
+app.get('/api/documentos-fiscais/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        const empresa = await pool.query('SELECT razaosocial, cnpj, emailempresa FROM empresas WHERE id = $1', [doc.empresa_id]);
+        let osData = null;
+        if (doc.ordem_servico_id) {
+            const os = await pool.query('SELECT * FROM ordens_servico WHERE id = $1', [doc.ordem_servico_id]);
+            osData = os.rows[0] || null;
+        }
+        res.json({ ...doc, empresa_nome: empresa.rows[0]?.razaosocial, empresa_cnpj: empresa.rows[0]?.cnpj, ordem_servico: osData });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Preparar documento fiscal a partir de uma OS
+app.post('/api/documentos-fiscais/preparar', verificarTokenContador, async (req, res) => {
+    try {
+        const { ordem_servico_id, tipo } = req.body;
+        if (!ordem_servico_id) return res.status(400).json({ erro: 'Ordem de serviço é obrigatória.' });
+        if (!tipo || !['NF-e', 'NFS-e'].includes(tipo)) return res.status(400).json({ erro: 'Tipo deve ser NF-e ou NFS-e.' });
+
+        const os = await osPertenceContador(ordem_servico_id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada ou acesso negado.' });
+
+        // Verifica se já existe documento fiscal para esta OS
+        const existente = await pool.query('SELECT id FROM documentos_fiscais WHERE ordem_servico_id = $1 AND status NOT IN ($2, $3)',
+            [ordem_servico_id, 'cancelada', 'rejeitada']);
+        if (existente.rows.length > 0) {
+            return res.status(400).json({ erro: 'Já existe um documento fiscal ativo para esta OS.' });
+        }
+
+        // Monta dados fiscais a partir da OS
+        const dadosFiscais = {
+            emitente: { nome: '', cnpj: '', inscricao_municipal: '', inscricao_estadual: '', endereco: '', municipio: '', uf: '' },
+            destinatario: {
+                nome: os.cliente_nome || '',
+                cpf_cnpj: os.cliente_cpf_cnpj || '',
+                endereco: os.cliente_endereco || '',
+                municipio: os.cliente_municipio || '',
+                uf: os.cliente_uf || ''
+            },
+            servico: {
+                descricao: os.servico_descricao || '',
+                quantidade: parseFloat(os.quantidade) || 1,
+                valor_unitario: parseFloat(os.valor_unitario) || 0,
+                valor_total: parseFloat(os.valor_total) || 0,
+                desconto: parseFloat(os.desconto) || 0
+            },
+            observacoes: os.observacoes || ''
+        };
+
+        const result = await pool.query(
+            `INSERT INTO documentos_fiscais (empresa_id, contador_id, ordem_servico_id, tipo, status, valor, dados_fiscais, datacriacao)
+             VALUES ($1, $2, $3, $4, 'aguardando_conferencia', $5, $6, NOW()) RETURNING id`,
+            [os.empresa_id, req.contadorId, ordem_servico_id, tipo, parseFloat(os.valor_total) || 0, JSON.stringify(dadosFiscais)]
+        );
+        const docId = result.rows[0].id;
+        await registrarHistoricoFiscal(docId, req.contadorId, 'contador', 'Preparação', `Documento ${tipo} criado a partir da OS #${os.numero || os.id}`);
+        await registrarAuditoria(req.contadorId, 'contador', `Preparou documento fiscal ${tipo} a partir da OS ID: ${ordem_servico_id}`, req,
+            { entidade: 'documento_fiscal', entidade_id: docId, empresa_id: os.empresa_id });
+        res.status(201).json({ mensagem: 'Documento fiscal preparado!', id: docId });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao preparar documento fiscal: ' + erro.message });
+    }
+});
+
+// Atualizar dados fiscais (conferência)
+app.put('/api/documentos-fiscais/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        if (['autorizada', 'cancelada'].includes(doc.status)) {
+            return res.status(400).json({ erro: 'Documento autorizado ou cancelado não pode ser editado.' });
+        }
+        const { dados_fiscais, valor, tipo } = req.body;
+        const updates = [];
+        const params = [];
+        let idx = 1;
+        if (dados_fiscais !== undefined) { updates.push(`dados_fiscais = $${idx++}`); params.push(JSON.stringify(dados_fiscais)); }
+        if (valor !== undefined) { updates.push(`valor = $${idx++}`); params.push(valor); }
+        if (tipo !== undefined) { updates.push(`tipo = $${idx++}`); params.push(tipo); }
+        if (updates.length > 0) {
+            params.push(req.params.id);
+            await pool.query(`UPDATE documentos_fiscais SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+            await registrarHistoricoFiscal(req.params.id, req.contadorId, 'contador', 'Conferência', 'Dados fiscais conferidos/atualizados');
+        }
+        res.json({ mensagem: 'Documento fiscal atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar: ' + erro.message });
+    }
+});
+
+// Alterar status do documento fiscal
+app.put('/api/documentos-fiscais/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        const { status } = req.body;
+        const statusValidos = ['rascunho', 'aguardando_conferencia', 'pronta_para_emissao', 'em_processamento', 'autorizada', 'rejeitada', 'cancelada'];
+        if (!statusValidos.includes(status)) return res.status(400).json({ erro: 'Status inválido.' });
+        const statusAnterior = doc.status;
+        await pool.query('UPDATE documentos_fiscais SET status = $1 WHERE id = $2', [status, req.params.id]);
+        await registrarHistoricoFiscal(req.params.id, req.contadorId, 'contador', 'Status alterado', `De "${statusAnterior}" para "${status}"`);
+        await registrarAuditoria(req.contadorId, 'contador', `Alterou status do documento fiscal ID: ${req.params.id} para "${status}"`, req,
+            { entidade: 'documento_fiscal', entidade_id: parseInt(req.params.id) });
+        res.json({ mensagem: 'Status atualizado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Marcar como pronta para emissão
+app.put('/api/documentos-fiscais/:id/pronta-emissao', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        if (!['aguardando_conferencia', 'rascunho', 'rejeitada'].includes(doc.status)) {
+            return res.status(400).json({ erro: 'Apenas documentos em conferência ou rejeitados podem ser marcados como prontos.' });
+        }
+        await pool.query('UPDATE documentos_fiscais SET status = $1 WHERE id = $2', ['pronta_para_emissao', req.params.id]);
+        await registrarHistoricoFiscal(req.params.id, req.contadorId, 'contador', 'Pronta para emissão', 'Documento conferido e marcado como pronto para emissão');
+        res.json({ mensagem: 'Documento marcado como pronto para emissão!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Cancelar documento fiscal
+app.put('/api/documentos-fiscais/:id/cancelar', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        if (doc.status === 'cancelada') return res.status(400).json({ erro: 'Documento já está cancelado.' });
+        const statusAnterior = doc.status;
+        await pool.query('UPDATE documentos_fiscais SET status = $1 WHERE id = $2', ['cancelada', req.params.id]);
+        await registrarHistoricoFiscal(req.params.id, req.contadorId, 'contador', 'Cancelamento', `Documento cancelado (status anterior: ${statusAnterior})`);
+        res.json({ mensagem: 'Documento cancelado.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Histórico do documento fiscal
+app.get('/api/documentos-fiscais/:id/historico', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        const resultado = await pool.query(
+            'SELECT * FROM documento_fiscal_historico WHERE documento_fiscal_id = $1 ORDER BY data DESC', [req.params.id]
+        );
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Excluir documento fiscal
+app.delete('/api/documentos-fiscais/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const doc = await docFiscalPertenceContador(req.params.id, req.contadorId);
+        if (!doc) return res.status(404).json({ erro: 'Documento fiscal não encontrado ou acesso negado.' });
+        if (['autorizada', 'em_processamento'].includes(doc.status)) {
+            return res.status(400).json({ erro: 'Não é possível excluir um documento autorizado ou em processamento.' });
+        }
+        await pool.query('DELETE FROM documento_fiscal_historico WHERE documento_fiscal_id = $1', [req.params.id]);
+        await pool.query('DELETE FROM documentos_fiscais WHERE id = $1', [req.params.id]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu documento fiscal ID: ${req.params.id}`, req,
+            { entidade: 'documento_fiscal', entidade_id: parseInt(req.params.id) });
+        res.json({ mensagem: 'Documento fiscal excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
     }
