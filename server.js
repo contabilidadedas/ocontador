@@ -252,6 +252,64 @@ async function criarTabelasAutomaticamente() {
                 status VARCHAR(50) DEFAULT 'pendente',
                 datacriacao TIMESTAMP DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS ordens_servico (
+                id SERIAL PRIMARY KEY,
+                numero VARCHAR(50),
+                empresa_id INTEGER,
+                contador_id INTEGER NOT NULL,
+                contato_id INTEGER,
+                data DATE,
+                responsavel VARCHAR(255),
+                descricao TEXT,
+                desconto NUMERIC(12,2) DEFAULT 0,
+                valor_total NUMERIC(12,2) DEFAULT 0,
+                observacoes TEXT,
+                status VARCHAR(30) DEFAULT 'rascunho',
+                dados_fiscais_preparados BOOLEAN DEFAULT FALSE,
+                datacriacao TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS os_itens (
+                id SERIAL PRIMARY KEY,
+                os_id INTEGER NOT NULL,
+                contador_id INTEGER NOT NULL,
+                descricao VARCHAR(255) NOT NULL,
+                quantidade NUMERIC(12,2) DEFAULT 1,
+                valor_unitario NUMERIC(12,2) DEFAULT 0,
+                desconto NUMERIC(12,2) DEFAULT 0,
+                valor_total NUMERIC(12,2) DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS os_historico (
+                id SERIAL PRIMARY KEY,
+                os_id INTEGER NOT NULL,
+                contador_id INTEGER NOT NULL,
+                usuario_id INTEGER,
+                usuario_tipo VARCHAR(20),
+                acao VARCHAR(255),
+                detalhe TEXT,
+                status_anterior VARCHAR(30),
+                status_nova VARCHAR(30),
+                data TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS os_dados_fiscais (
+                id SERIAL PRIMARY KEY,
+                os_id INTEGER NOT NULL,
+                contador_id INTEGER NOT NULL,
+                tipo_documento VARCHAR(10) DEFAULT 'NFS-e',
+                natureza_operacao VARCHAR(255),
+                codigo_servico VARCHAR(20),
+                aliquota_iss NUMERIC(5,2) DEFAULT 0,
+                base_calculo NUMERIC(12,2) DEFAULT 0,
+                valor_iss NUMERIC(12,2) DEFAULT 0,
+                retencao_inss NUMERIC(12,2) DEFAULT 0,
+                retencao_irrf NUMERIC(12,2) DEFAULT 0,
+                retencao_iss NUMERIC(12,2) DEFAULT 0,
+                dados_complementares TEXT,
+                data_preparacao TIMESTAMP DEFAULT NOW()
+            );
         `);
 
         // Garante colunas em tabelas antigas
@@ -347,7 +405,8 @@ async function criarTabelasAutomaticamente() {
         const rlsTables = ['documentos', 'guias', 'empresas', 'pendencias', 'financeiro',
             'calendario_obrigacoes', 'procuracoes', 'notas_fiscais', 'folha_pagamento',
             'checklist_mensal', 'avisos', 'chat_mensagens', 'crm_contatos', 'crm_atividades',
-            'crm_tarefas', 'documento_historico', 'guia_historico', 'audit_log'];
+            'crm_tarefas', 'documento_historico', 'guia_historico', 'audit_log',
+            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais'];
 
         for (const tabela of rlsTables) {
             await pool.query(`ALTER TABLE ${tabela} ENABLE ROW LEVEL SECURITY;`);
@@ -357,7 +416,8 @@ async function criarTabelasAutomaticamente() {
         // Tabelas com coluna contador_id (maioria)
         const contadorIdTables = ['documentos', 'pendencias', 'financeiro', 'calendario_obrigacoes',
             'procuracoes', 'notas_fiscais', 'folha_pagamento', 'avisos', 'chat_mensagens',
-            'crm_contatos', 'crm_atividades', 'crm_tarefas'];
+            'crm_contatos', 'crm_atividades', 'crm_tarefas',
+            'ordens_servico', 'os_itens', 'os_historico', 'os_dados_fiscais'];
         for (const tabela of contadorIdTables) {
             await pool.query(`DROP POLICY IF EXISTS ${tabela}_rls_policy ON ${tabela};`);
             await pool.query(`
@@ -477,6 +537,24 @@ async function registrarHistoricoGuia(guiaId, usuarioId, usuarioTipo, acao, deta
     } catch (e) {
         console.error('Erro ao registrar histórico de guia:', e.message);
     }
+}
+
+// Helper: registra uma ação no histórico de uma ordem de serviço
+async function registrarHistoricoOS(osId, contadorId, usuarioId, usuarioTipo, acao, detalhe, statusAnterior, statusNova) {
+    try {
+        await pool.query(
+            'INSERT INTO os_historico (os_id, contador_id, usuario_id, usuario_tipo, acao, detalhe, status_anterior, status_nova, data) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
+            [osId, contadorId, usuarioId, usuarioTipo, acao, detalhe || null, statusAnterior || null, statusNova || null]
+        );
+    } catch (e) {
+        console.error('Erro ao registrar histórico de OS:', e.message);
+    }
+}
+
+// Helper: verifica se uma OS pertence ao contador
+async function osPertenceContador(osId, contadorId) {
+    const r = await pool.query('SELECT * FROM ordens_servico WHERE id = $1 AND contador_id = $2', [osId, contadorId]);
+    return r.rows.length > 0 ? r.rows[0] : null;
 }
 
 // Helper: verifica se uma guia pertence a uma empresa do contador
@@ -2083,6 +2161,282 @@ app.delete('/api/crm/contatos/:id', verificarTokenContador, async (req, res) => 
         res.json({ mensagem: 'Contato excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 15b. ORDEM DE SERVIÇO (OS) — integrada ao CRM
+// ==========================================
+
+// Listar OS do contador
+app.get('/api/os', verificarTokenContador, async (req, res) => {
+    try {
+        const { status, empresa_id } = req.query;
+        let query = `SELECT o.*, e.razaosocial as empresa_nome, c.nome as contato_nome
+                     FROM ordens_servico o
+                     LEFT JOIN empresas e ON o.empresa_id = e.id
+                     LEFT JOIN crm_contatos c ON o.contato_id = c.id
+                     WHERE o.contador_id = $1`;
+        const params = [req.contadorId];
+        let idx = 2;
+        if (status) { query += ` AND o.status = $${idx++}`; params.push(status); }
+        if (empresa_id) { query += ` AND o.empresa_id = $${idx++}`; params.push(empresa_id); }
+        query += ' ORDER BY o.datacriacao DESC';
+        const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar ordens de serviço: ' + erro.message });
+    }
+});
+
+// Detalhes de uma OS (com itens + dados fiscais)
+app.get('/api/os/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+
+        const [itens, fiscal, empresa, contato] = await Promise.all([
+            pool.query('SELECT * FROM os_itens WHERE os_id = $1 ORDER BY id ASC', [id]),
+            pool.query('SELECT * FROM os_dados_fiscais WHERE os_id = $1', [id]),
+            os.empresa_id ? pool.query('SELECT id, razaosocial, cnpj FROM empresas WHERE id = $1', [os.empresa_id]) : Promise.resolve({ rows: [] }),
+            os.contato_id ? pool.query('SELECT id, nome, email, telefone FROM crm_contatos WHERE id = $1', [os.contato_id]) : Promise.resolve({ rows: [] })
+        ]);
+
+        res.json({
+            ...os,
+            itens: itens.rows,
+            dados_fiscais: fiscal.rows[0] || null,
+            empresa: empresa.rows[0] || null,
+            contato: contato.rows[0] || null
+        });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar OS: ' + erro.message });
+    }
+});
+
+// Criar OS
+app.post('/api/os', verificarTokenContador, async (req, res) => {
+    try {
+        const { numero, empresa_id, contato_id, data, responsavel, descricao, desconto, observacoes, status, itens } = req.body;
+
+        // Valida empresa se informada
+        if (empresa_id && !(await empresaPertenceContador(empresa_id, req.contadorId))) {
+            return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        }
+
+        const statusFinal = status || 'rascunho';
+        const result = await pool.query(
+            `INSERT INTO ordens_servico (numero, empresa_id, contador_id, contato_id, data, responsavel, descricao, desconto, observacoes, status, datacriacao)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING id`,
+            [numero || null, empresa_id || null, req.contadorId, contato_id || null,
+             data || null, responsavel || '', descricao || '', desconto || 0, observacoes || '', statusFinal]
+        );
+        const osId = result.rows[0].id;
+
+        // Auto-gera número se não informado
+        if (!numero) {
+            const ano = new Date().getFullYear();
+            const gerado = `OS-${ano}-${String(osId).padStart(4, '0')}`;
+            await pool.query('UPDATE ordens_servico SET numero = $1 WHERE id = $2', [gerado, osId]);
+        }
+
+        // Insere itens
+        let valorTotal = 0;
+        if (Array.isArray(itens) && itens.length > 0) {
+            for (const item of itens) {
+                const qtd = parseFloat(item.quantidade) || 1;
+                const vu = parseFloat(item.valor_unitario) || 0;
+                const desc = parseFloat(item.desconto) || 0;
+                const vt = qtd * vu - desc;
+                valorTotal += vt;
+                await pool.query(
+                    `INSERT INTO os_itens (os_id, contador_id, descricao, quantidade, valor_unitario, desconto, valor_total)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [osId, req.contadorId, item.descricao || '', qtd, vu, desc, vt]
+                );
+            }
+        }
+        valorTotal -= (parseFloat(desconto) || 0);
+        if (valorTotal < 0) valorTotal = 0;
+        await pool.query('UPDATE ordens_servico SET valor_total = $1 WHERE id = $2', [valorTotal, osId]);
+
+        await registrarHistoricoOS(osId, req.contadorId, req.contadorId, 'contador', 'Criação', `OS criada com status "${statusFinal}"`, null, statusFinal);
+        await registrarAuditoria(req.contadorId, 'contador', `Criou ordem de serviço (ID: ${osId})`, req,
+            { entidade: 'ordem_servico', entidade_id: osId, empresa_id: parseInt(empresa_id) || null });
+
+        res.status(201).json({ mensagem: 'Ordem de serviço criada!', id: osId });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao criar OS: ' + erro.message });
+    }
+});
+
+// Atualizar OS (apenas se rascunho ou em análise)
+app.put('/api/os/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+        if (!['rascunho', 'em_analise'].includes(os.status)) {
+            return res.status(400).json({ erro: 'Apenas OS em rascunho ou em análise podem ser editadas.' });
+        }
+
+        const { numero, empresa_id, contato_id, data, responsavel, descricao, desconto, observacoes, itens } = req.body;
+
+        if (empresa_id && !(await empresaPertenceContador(empresa_id, req.contadorId))) {
+            return res.status(403).json({ erro: 'Você não tem acesso a esta empresa.' });
+        }
+
+        await pool.query(
+            `UPDATE ordens_servico SET
+                numero = COALESCE($1, numero),
+                empresa_id = COALESCE($2, empresa_id),
+                contato_id = $3,
+                data = COALESCE($4, data),
+                responsavel = COALESCE($5, responsavel),
+                descricao = COALESCE($6, descricao),
+                desconto = COALESCE($7, desconto),
+                observacoes = COALESCE($8, observacoes)
+             WHERE id = $9`,
+            [numero || null, empresa_id || null, contato_id || null,
+             data || null, responsavel || null, descricao || null, desconto || null, observacoes || null, id]
+        );
+
+        // Recria itens
+        if (Array.isArray(itens)) {
+            await pool.query('DELETE FROM os_itens WHERE os_id = $1', [id]);
+            let valorTotal = 0;
+            for (const item of itens) {
+                const qtd = parseFloat(item.quantidade) || 1;
+                const vu = parseFloat(item.valor_unitario) || 0;
+                const desc = parseFloat(item.desconto) || 0;
+                const vt = qtd * vu - desc;
+                valorTotal += vt;
+                await pool.query(
+                    `INSERT INTO os_itens (os_id, contador_id, descricao, quantidade, valor_unitario, desconto, valor_total)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [id, req.contadorId, item.descricao || '', qtd, vu, desc, vt]
+                );
+            }
+            valorTotal -= (parseFloat(desconto) || 0);
+            if (valorTotal < 0) valorTotal = 0;
+            await pool.query('UPDATE ordens_servico SET valor_total = $1 WHERE id = $2', [valorTotal, id]);
+        }
+
+        await registrarHistoricoOS(id, req.contadorId, req.contadorId, 'contador', 'Edição', 'OS editada', os.status, os.status);
+        res.json({ mensagem: 'Ordem de serviço atualizada!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao editar OS: ' + erro.message });
+    }
+});
+
+// Alterar status da OS
+app.put('/api/os/:id/status', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const statusValidos = ['rascunho', 'em_analise', 'aprovada', 'em_execucao', 'concluida', 'cancelada'];
+        if (!statusValidos.includes(status)) return res.status(400).json({ erro: 'Status inválido.' });
+
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+
+        const statusAnterior = os.status;
+        await pool.query('UPDATE ordens_servico SET status = $1 WHERE id = $2', [status, id]);
+        await registrarHistoricoOS(id, req.contadorId, req.contadorId, 'contador', 'Status alterado',
+            `De "${statusAnterior}" para "${status}"`, statusAnterior, status);
+        await registrarAuditoria(req.contadorId, 'contador', `Alterou status da OS ${os.numero || id} para "${status}"`, req,
+            { entidade: 'ordem_servico', entidade_id: parseInt(id), detalhe: `Status: ${statusAnterior} → ${status}` });
+        res.json({ mensagem: 'Status atualizado!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao atualizar status: ' + erro.message });
+    }
+});
+
+// Histórico da OS
+app.get('/api/os/:id/historico', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+        const resultado = await pool.query('SELECT * FROM os_historico WHERE os_id = $1 ORDER BY data DESC', [id]);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar histórico: ' + erro.message });
+    }
+});
+
+// Preparar emissão fiscal
+app.post('/api/os/:id/preparar-fiscal', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+
+        const { tipo_documento, natureza_operacao, codigo_servico, aliquota_iss,
+               base_calculo, valor_iss, retencao_inss, retencao_irrf, retencao_iss, dados_complementares } = req.body;
+
+        // Verifica se já existe dados fiscais
+        const existente = await pool.query('SELECT id FROM os_dados_fiscais WHERE os_id = $1', [id]);
+
+        if (existente.rows.length > 0) {
+            await pool.query(
+                `UPDATE os_dados_fiscais SET
+                    tipo_documento = COALESCE($1, tipo_documento),
+                    natureza_operacao = COALESCE($2, natureza_operacao),
+                    codigo_servico = COALESCE($3, codigo_servico),
+                    aliquota_iss = COALESCE($4, aliquota_iss),
+                    base_calculo = COALESCE($5, base_calculo),
+                    valor_iss = COALESCE($6, valor_iss),
+                    retencao_inss = COALESCE($7, retencao_inss),
+                    retencao_irrf = COALESCE($8, retencao_irrf),
+                    retencao_iss = COALESCE($9, retencao_iss),
+                    dados_complementares = COALESCE($10, dados_complementares),
+                    data_preparacao = NOW()
+                 WHERE os_id = $11`,
+                [tipo_documento || null, natureza_operacao || null, codigo_servico || null,
+                 aliquota_iss || null, base_calculo || null, valor_iss || null,
+                 retencao_inss || null, retencao_irrf || null, retencao_iss || null,
+                 dados_complementares || null, id]
+            );
+        } else {
+            await pool.query(
+                `INSERT INTO os_dados_fiscais (os_id, contador_id, tipo_documento, natureza_operacao, codigo_servico,
+                    aliquota_iss, base_calculo, valor_iss, retencao_inss, retencao_irrf, retencao_iss, dados_complementares, data_preparacao)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+                [id, req.contadorId, tipo_documento || 'NFS-e', natureza_operacao || null, codigo_servico || null,
+                 aliquota_iss || 0, base_calculo || os.valor_total, valor_iss || 0,
+                 retencao_inss || 0, retencao_irrf || 0, retencao_iss || 0, dados_complementares || null]
+            );
+        }
+
+        await pool.query('UPDATE ordens_servico SET dados_fiscais_preparados = TRUE WHERE id = $1', [id]);
+        await registrarHistoricoOS(id, req.contadorId, req.contadorId, 'contador', 'Preparação fiscal',
+            `Dados fiscais preparados para ${tipo_documento || 'NFS-e'}`, os.status, os.status);
+        await registrarAuditoria(req.contadorId, 'contador', `Preparou emissão fiscal da OS ${os.numero || id}`, req,
+            { entidade: 'ordem_servico', entidade_id: parseInt(id), detalhe: `Tipo: ${tipo_documento || 'NFS-e'}` });
+
+        res.json({ mensagem: 'Dados fiscais preparados com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao preparar dados fiscais: ' + erro.message });
+    }
+});
+
+// Excluir OS
+app.delete('/api/os/:id', verificarTokenContador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await osPertenceContador(id, req.contadorId);
+        if (!os) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+        await pool.query('DELETE FROM os_itens WHERE os_id = $1', [id]);
+        await pool.query('DELETE FROM os_historico WHERE os_id = $1', [id]);
+        await pool.query('DELETE FROM os_dados_fiscais WHERE os_id = $1', [id]);
+        await pool.query('DELETE FROM ordens_servico WHERE id = $1', [id]);
+        await registrarAuditoria(req.contadorId, 'contador', `Excluiu ordem de serviço ${os.numero || id}`, req,
+            { entidade: 'ordem_servico', entidade_id: parseInt(id) });
+        res.json({ mensagem: 'Ordem de serviço excluída.' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao excluir OS: ' + erro.message });
     }
 });
 
