@@ -2592,12 +2592,6 @@ async function registrarHistoricoFiscal(docFiscalId, usuarioId, usuarioTipo, aca
     }
 }
 
-// Helper: verifica se uma OS pertence ao contador
-async function osPertenceContador(osId, contadorId) {
-    const r = await pool.query('SELECT * FROM ordens_servico WHERE id = $1 AND contador_id = $2', [osId, contadorId]);
-    return r.rows.length > 0 ? r.rows[0] : null;
-}
-
 // Helper: verifica se um documento fiscal pertence ao contador
 async function docFiscalPertenceContador(docId, contadorId) {
     const r = await pool.query('SELECT * FROM documentos_fiscais WHERE id = $1 AND contador_id = $2', [docId, contadorId]);
@@ -2618,6 +2612,24 @@ app.get('/api/ordens-servico', verificarTokenContador, async (req, res) => {
         if (empresa_id) { query += ` AND os.empresa_id = $${idx++}`; params.push(empresa_id); }
         query += ' ORDER BY os.datacriacao DESC';
         const resultado = await pool.query(query, params);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar ordens de serviço: ' + erro.message });
+    }
+});
+
+// ==========================================
+// 18b. CLIENTE - ORDENS DE SERVIÇO (com token)
+// ==========================================
+app.get('/api/cliente/os', verificarTokenCliente, async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT id, numero, data, responsavel, descricao, valor_total, status, datacriacao
+             FROM ordens_servico
+             WHERE empresa_id = $1 AND status NOT IN ('rascunho', 'cancelada')
+             ORDER BY datacriacao DESC`,
+            [req.empresaId]
+        );
         res.json(resultado.rows);
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao buscar ordens de serviço: ' + erro.message });
@@ -2931,6 +2943,25 @@ app.delete('/api/documentos-fiscais/:id', verificarTokenContador, async (req, re
         res.json({ mensagem: 'Documento fiscal excluído.' });
     } catch (erro) {
         res.status(500).json({ erro: 'Erro: ' + erro.message });
+    }
+});
+
+// Detalhes de uma OS pelo cliente (apenas itens + descrição, sem dados fiscais)
+app.get('/api/cliente/os/:id', verificarTokenCliente, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const os = await pool.query(
+            'SELECT * FROM ordens_servico WHERE id = $1 AND empresa_id = $2',
+            [id, req.empresaId]
+        );
+        if (os.rows.length === 0) return res.status(404).json({ erro: 'Ordem de serviço não encontrada.' });
+        const itens = await pool.query(
+            'SELECT descricao, quantidade, valor_unitario, desconto, valor_total FROM os_itens WHERE os_id = $1 ORDER BY id ASC',
+            [id]
+        );
+        res.json({ ...os.rows[0], itens: itens.rows });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar OS: ' + erro.message });
     }
 });
 
