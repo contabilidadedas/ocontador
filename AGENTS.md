@@ -37,6 +37,17 @@ Uses PostgreSQL for persistence and JWT for auth. File uploads (PDFs) stored in 
 - **Frontend (cliente)**: New sidebar item "Central de Pendências" (`clientViews['central-pendencias']`) with 6 summary cards + per-category cards. "Início" view gets a resumo widget with alert badges.
 - **Security**: Both endpoints use existing JWT middleware (`verificarTokenContador` / `verificarTokenCliente`). Contador queries filter by `contador_id`; cliente queries filter by `empresa_id` / `cnpj` from the token. RLS policies on all queried tables provide defense-in-depth. No cross-empresa data exposure.
 
+## Etapa 9 — Preparação para NF-e e NFS-e
+- **Ordens de Serviço** (`ordens_servico` table): CRUD completo com dados de cliente (nome, CPF/CNPJ, endereço, município, UF), serviço (descrição, quantidade, valor unitário, valor total, desconto), observações e status (rascunho, aberta, em_andamento, concluida, cancelada).
+- **Documentos Fiscais** (`documentos_fiscais` table): Preparados a partir de uma OS. Campos: tipo (NF-e/NFS-e), número, série, chave de acesso, protocolo, status, valor, XML, PDF/DANFE (BYTEA), data de emissão, data de autorização, dados fiscais (JSONB com emitente, destinatário, serviço), OS relacionada.
+- **Status do documento fiscal**: rascunho, aguardando_conferencia, pronta_para_emissao, em_processamento, autorizada, rejeitada, cancelada.
+- **Histórico de tentativas** (`documento_fiscal_historico` table): Registra todas as ações (preparação, conferência, alteração de status, cancelamento).
+- **Fluxo**: OS → Preparar nota (NF-e ou NFS-e) → Conferência fiscal (tela com emitente, cliente, CPF/CNPJ, endereço, serviço, valores, município, informações fiscais) → Marcar como pronta para emissão → Aguardando emissão.
+- **NÃO há integração externa** nesta etapa — nenhuma API fiscal é chamada. A emissão não é automática.
+- **Frontend**: Novos itens na sidebar: "Ordens de Serviço" e "Notas Fiscais (Prep.)". Botão "Emitir Nota Fiscal" em cada OS abre modal de seleção (NF-e/NFS-e) que prepara o documento e abre a tela de conferência.
+- **Segurança**: RLS habilitado nas 3 novas tabelas (21 tabelas com RLS no total). Validação de propriedade via `contador_id`. Auditoria registrada para criação, preparação e alteração de status.
+- **Endpoints**: `/api/ordens-servico` (GET, POST, PUT, DELETE, status), `/api/documentos-fiscais` (GET, POST preparar, PUT conferência, PUT status, PUT pronta-emissao, PUT cancelar, GET histórico, DELETE).
+
 ## Verify
 - `curl localhost:3000` returns the index.html landing page.
 - `curl localhost:3000/api/contador/login -X POST -H 'Content-Type: application/json' -d '{"email":"x","senha":"y"}'` returns a JSON error (confirms API + DB are live).
