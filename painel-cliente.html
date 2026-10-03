@@ -159,6 +159,10 @@
                 <a class="nav-item" data-view="guias" onclick="navigate('guias')"><i data-lucide="file-text"></i> Minhas Guias</a>
             </div>
             <div class="nav-section">
+                <div class="nav-section-title">Serviços</div>
+                <a class="nav-item" data-view="ordens-servico" onclick="navigate('ordens-servico')"><i data-lucide="clipboard-list"></i> Ordens de Serviço</a>
+            </div>
+            <div class="nav-section">
                 <div class="nav-section-title">Comunicação</div>
                 <a class="nav-item" data-view="calendario" onclick="navigate('calendario')"><i data-lucide="calendar"></i> Calendário</a>
                 <a class="nav-item" data-view="chat" onclick="navigate('chat')"><i data-lucide="message-square"></i> Chat com Contador</a>
@@ -721,6 +725,97 @@ window.copiarPix = function(code) {
 window.deletarDocCliente = async function(id) {
     if (!confirm('Excluir este documento?')) return;
     try { await api(`/api/documentos/cliente/${id}`, { method: 'DELETE' }); navigate('documentos'); } catch (e) { alert(e.message); }
+};
+
+// --- ORDENS DE SERVIÇO ---
+const OS_STATUS_BADGE = {
+    'em_analise': 'badge-orange',
+    'aprovada': 'badge-green',
+    'em_execucao': 'badge-purple',
+    'concluida': 'badge-green',
+    'cancelada': 'badge-grey'
+};
+const OS_STATUS_LABEL = {
+    'em_analise': 'EM ANÁLISE',
+    'aprovada': 'APROVADA',
+    'em_execucao': 'EM EXECUÇÃO',
+    'concluida': 'CONCLUÍDA',
+    'cancelada': 'CANCELADA'
+};
+
+clientViews['ordens-servico'] = async function() {
+    document.getElementById('content').innerHTML = `
+        <h1 class="page-title">Ordens de Serviço</h1>
+        <p class="page-subtitle">Acompanhe as ordens de serviço do seu contador</p>
+        <div class="card" style="padding:0;overflow:hidden;">
+            <div style="overflow-x:auto;"><table class="data-table">
+                <thead><tr><th>Número</th><th>Data</th><th>Descrição</th><th>Responsável</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody id="os-tbody"></tbody>
+            </table></div>
+        </div>`;
+    try {
+        const lista = await api('/api/cliente/os');
+        const tb = document.getElementById('os-tbody');
+        if (lista.length === 0) {
+            tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhuma ordem de serviço.</td></tr>';
+        } else {
+            const fmtValor = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            const fmtData = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+            tb.innerHTML = lista.map(o => `
+                <tr>
+                    <td style="font-weight:600;">${o.numero || '—'}</td>
+                    <td style="color:var(--text-secondary);">${fmtData(o.data)}</td>
+                    <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(o.descricao||'').replace(/"/g,'&quot;')}">${o.descricao || '—'}</td>
+                    <td style="color:var(--text-secondary);">${o.responsavel || '—'}</td>
+                    <td style="font-weight:600;">${fmtValor(o.valor_total)}</td>
+                    <td><span class="badge ${OS_STATUS_BADGE[o.status] || 'badge-grey'}">${OS_STATUS_LABEL[o.status] || o.status}</span></td>
+                    <td><button class="btn-sm btn-sm-purple" onclick="verOSCliente(${o.id})">Ver detalhes</button></td>
+                </tr>`).join('');
+        }
+    } catch (e) {
+        document.getElementById('os-tbody').innerHTML = '<tr><td colspan="7" style="color:var(--text-muted);">Erro ao carregar.</td></tr>';
+    }
+    lucide.createIcons();
+};
+
+window.verOSCliente = async function(id) {
+    try {
+        const os = await api(`/api/cliente/os/${id}`);
+        const fmtValor = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const fmtData = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+        const itensHtml = os.itens.length > 0 ? `
+            <table class="data-table" style="margin-top:12px;">
+                <thead><tr><th>Descrição</th><th>Qtd</th><th>Valor Unit.</th><th>Desc.</th><th>Total</th></tr></thead>
+                <tbody>
+                    ${os.itens.map(i => `<tr>
+                        <td>${i.descricao || '—'}</td>
+                        <td>${Number(i.quantidade || 0)}</td>
+                        <td>${fmtValor(i.valor_unitario)}</td>
+                        <td>${fmtValor(i.desconto)}</td>
+                        <td style="font-weight:600;">${fmtValor(i.valor_total)}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>` : '<div style="padding:12px;color:var(--text-muted);">Sem itens detalhados.</div>';
+
+        document.getElementById('content').insertAdjacentHTML('beforeend', `
+            <div class="modal-overlay active" id="modal-os-cli" onclick="if(event.target===this)this.remove()">
+                <div class="modal-card" style="max-width:600px;">
+                    <div class="modal-header"><h3>Ordem de Serviço ${os.numero || ''}</h3><button class="modal-close" onclick="document.getElementById('modal-os-cli').remove()">&times;</button></div>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+                        <div><span style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;">Data</span><div>${fmtData(os.data)}</div></div>
+                        <div><span style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;">Responsável</span><div>${os.responsavel || '—'}</div></div>
+                        <div><span style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;">Status</span><div><span class="badge ${OS_STATUS_BADGE[os.status] || 'badge-grey'}">${OS_STATUS_LABEL[os.status] || os.status}</span></div></div>
+                    </div>
+                    ${os.descricao ? `<div style="margin-bottom:16px;"><span style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;">Descrição</span><div style="font-size:14px;margin-top:4px;">${os.descricao}</div></div>` : ''}
+                    ${os.observacoes ? `<div style="margin-bottom:16px;"><span style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;">Observações</span><div style="font-size:13px;color:var(--text-secondary);margin-top:4px;">${os.observacoes}</div></div>` : ''}
+                    ${itensHtml}
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                        <span style="font-weight:700;font-size:16px;">Valor Total</span>
+                        <span style="font-weight:800;font-size:18px;color:var(--accent-purple);">${fmtValor(os.valor_total)}</span>
+                    </div>
+                </div>
+            </div>`);
+    } catch (e) { alert(e.message); }
 };
 
 // --- CALENDÁRIO ---
