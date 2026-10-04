@@ -2626,7 +2626,7 @@ app.get('/api/cliente/os', verificarTokenCliente, async (req, res) => {
         const resultado = await pool.query(
             `SELECT id, numero, data, responsavel, descricao, valor_total, status, datacriacao
              FROM ordens_servico
-             WHERE empresa_id = $1 AND status NOT IN ('rascunho', 'cancelada')
+             WHERE empresa_id = $1 AND status != 'cancelada'
              ORDER BY datacriacao DESC`,
             [req.empresaId]
         );
